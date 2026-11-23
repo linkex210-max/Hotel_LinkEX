@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: hotel_linkex_db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-hotel_db}
+      POSTGRES_USER: ${DB_USER:-hotel_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-hotel_pass123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-hotel_user} -d ${DB_NAME:-hotel_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: hotel_linkex_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hotel_linkex_backend
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hotel_linkex_celery
+    command: celery -A config worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hotel_linkex_beat
+    command: celery -A config beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - db
+      - redis
+
+volumes:
+  postgres_data:
+  redis_data:
