@@ -83,29 +83,72 @@ class Invoice(models.Model):
         constraints = [
             models.CheckConstraint(check=models.Q(total_amount__gte=0), name='invoice_total_amount_gte_zero'),
             models.CheckConstraint(check=models.Q(tax_amount__gte=0), name='invoice_tax_amount_gte_zero'),
+            models.CheckConstraint(check=models.Q(subtotal__gte=0), name='invoice_subtotal_gte_zero'),
+            models.CheckConstraint(check=models.Q(discount_amount__gte=0), name='invoice_discount_amount_gte_zero'),
         ]
 
     def __str__(self):
         return f"{self.invoice_number} ({self.total_amount} ريال)"
 
     def generate_hash(self):
-        payload = f"{self.invoice_number}|{self.issue_date}|{self.total_amount}|{self.tax_amount}"
+        """
+        توليد البصمة الرقمية SHA-256 لجميع حقول الفاتورة المالية والهوية.
+        يجب أن تُدرج جميع الحقول الجوهرية بترتيب ثابت حتى يكون الـ Hash قابلاً للتحقق.
+
+        تحذير أمني: QuerySet.update() يتجاوز Invoice.save() تماماً.
+        يجب دائماً تعديل الفواتير عبر instance.save() فقط، وليس Invoice.objects.update().
+        أي update() مباشر على جدول الفواتير يُعدّ انتهاكاً لمتطلبات ZATCA.
+        """
+        payload = (
+            f"{self.invoice_number}"
+            f"|{self.issue_date}"
+            f"|{self.invoice_type}"
+            f"|{self.buyer_name}"
+            f"|{self.buyer_vat_number or ''}"
+            f"|{self.subtotal}"
+            f"|{self.tax_rate}"
+            f"|{self.tax_amount}"
+            f"|{self.discount_amount}"
+            f"|{self.total_amount}"
+        )
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
     def save(self, *args, **kwargs):
+        """
+        حماية الفاتورة الضريبية من أي تعديل بعد الإصدار (ZATCA Compliance).
+
+        الحقول المحمية: invoice_number, invoice_type, buyer_name, buyer_vat_number,
+        subtotal, tax_rate, tax_amount, discount_amount, total_amount,
+        invoice_hash, qr_code_data, line_items.
+
+        تحذير: QuerySet.update() يتجاوز هذه الحماية. راجع generate_hash() docstring.
+        """
         if self.pk:
             orig = Invoice.objects.filter(pk=self.pk).values(
-                'invoice_number', 'total_amount', 'subtotal', 'tax_amount', 'invoice_hash'
+                'invoice_number', 'invoice_type', 'buyer_name', 'buyer_vat_number',
+                'total_amount', 'subtotal', 'tax_rate', 'tax_amount',
+                'discount_amount', 'invoice_hash', 'qr_code_data', 'line_items',
             ).first()
             if orig:
-                if (
-                    orig['invoice_number'] != self.invoice_number or
-                    Decimal(str(orig['total_amount'])) != Decimal(str(self.total_amount)) or
-                    Decimal(str(orig['subtotal'])) != Decimal(str(self.subtotal)) or
-                    Decimal(str(orig['tax_amount'])) != Decimal(str(self.tax_amount)) or
-                    (orig['invoice_hash'] and orig['invoice_hash'] != self.invoice_hash)
-                ):
-                    raise ValidationError(_("الفواتير الضريبية المصدرة غير قابلة للتعديل بتاتاً وفقاً لمتطلبات هيئة الزكاة والضريبة والجمارك (ZATCA)"))
+                tampered = (
+                    orig['invoice_number'] != self.invoice_number
+                    or orig['invoice_type'] != self.invoice_type
+                    or orig['buyer_name'] != self.buyer_name
+                    or (orig['buyer_vat_number'] or '') != (self.buyer_vat_number or '')
+                    or Decimal(str(orig['total_amount'])) != Decimal(str(self.total_amount))
+                    or Decimal(str(orig['subtotal'])) != Decimal(str(self.subtotal))
+                    or Decimal(str(orig['tax_rate'])) != Decimal(str(self.tax_rate))
+                    or Decimal(str(orig['tax_amount'])) != Decimal(str(self.tax_amount))
+                    or Decimal(str(orig['discount_amount'])) != Decimal(str(self.discount_amount))
+                    or (orig['invoice_hash'] and orig['invoice_hash'] != self.invoice_hash)
+                    or (orig['qr_code_data'] and orig['qr_code_data'] != (self.qr_code_data or ''))
+                    or orig['line_items'] != self.line_items
+                )
+                if tampered:
+                    raise ValidationError(_(
+                        "الفواتير الضريبية المصدرة غير قابلة للتعديل بتاتاً "
+                        "وفقاً لمتطلبات هيئة الزكاة والضريبة والجمارك (ZATCA)"
+                    ))
         if not self.invoice_hash:
             super().save(*args, **kwargs)
             self.invoice_hash = self.generate_hash()
@@ -137,6 +180,9 @@ class Expense(models.Model):
         verbose_name = _('مصروف')
         verbose_name_plural = _('المصروفات')
         ordering = ['-date_incurred']
+        constraints = [
+            models.CheckConstraint(check=models.Q(amount__gt=0), name='expense_amount_gt_zero'),
+        ]
 
 
 class OwnerStatement(models.Model):
@@ -157,3 +203,12 @@ class OwnerStatement(models.Model):
         verbose_name = _('كشف حساب المالك')
         verbose_name_plural = _('كشوفات حسابات الملاك')
         ordering = ['-period_end']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(period_start__lte=models.F('period_end')),
+                name='owner_statement_period_start_lte_end'
+            ),
+            models.CheckConstraint(check=models.Q(total_revenue__gte=0), name='owner_statement_revenue_gte_zero'),
+            models.CheckConstraint(check=models.Q(total_expenses__gte=0), name='owner_statement_expenses_gte_zero'),
+            models.CheckConstraint(check=models.Q(management_commission__gte=0), name='owner_statement_commission_gte_zero'),
+        ]

@@ -89,7 +89,7 @@ class ConcurrencyAndE2ETestCase(TransactionTestCase):
         t2.join()
 
         # Exactly 1 booking succeeded
-        self.assertEqual(len(results), 1, "Exactly one booking must succeed when 1 room is available")
+        self.assertEqual(len(results), 1, f"Results: {results}, Errors: {errors}")
         self.assertEqual(len(errors), 1, "The second concurrent booking must be rejected")
         
         # Check inventory is exactly 1 booked room
@@ -149,3 +149,61 @@ class ConcurrencyAndE2ETestCase(TransactionTestCase):
         self.unit.refresh_from_db()
         self.assertEqual(booking.status, Booking.Status.CHECKED_OUT)
         self.assertEqual(self.unit.status, Unit.Status.CLEANING)
+
+    def test_concurrent_invoice_generation_barrier(self):
+        """
+        ISS-06: Truly concurrent invoice generation using threading.Barrier
+        Two concurrent threads attempt to generate an invoice for the same paid booking simultaneously.
+        Verifies that no duplicate invoice is ever created and no TransactionManagementError occurs.
+        """
+        booking = BookingService.create_booking_atomic({
+            "room_type_id": self.room_type.id,
+            "guest_name": "Concurrent Payer",
+            "guest_phone": "+966588888888",
+            "check_in_date": self.check_in + timedelta(days=10),
+            "check_out_date": self.check_out + timedelta(days=10),
+        })
+        booking.is_paid = True
+        booking.save()
+
+        barrier = threading.Barrier(2)
+        invoices = []
+        errors = []
+
+        def generate_inv():
+            connection.close()
+            try:
+                barrier.wait(timeout=5)
+                inv = FinanceService.generate_invoice_for_booking(booking)
+                invoices.append(inv.id)
+            except Exception as e:
+                errors.append(str(e))
+            finally:
+                connection.close()
+
+        t1 = threading.Thread(target=generate_inv)
+        t2 = threading.Thread(target=generate_inv)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        # On engines with row-level locks (PostgreSQL), select_for_update serializes cleanly:
+        # both threads succeed and return the same invoice.
+        # On SQLite (which lacks select_for_update and uses table locks), one thread may get
+        # an OperationalError (table locked), but crucially NO TransactionManagementError or
+        # duplicate invoice is ever produced.
+        if connection.features.has_select_for_update:
+            self.assertEqual(len(errors), 0, f"No thread should raise an error on PostgreSQL: {errors}")
+            self.assertEqual(len(invoices), 2)
+            self.assertEqual(invoices[0], invoices[1])
+        else:
+            for err in errors:
+                self.assertNotIn("TransactionManagementError", err)
+                self.assertTrue("database table is locked" in err or "database is locked" in err)
+
+        self.assertEqual(
+            Invoice.objects.filter(booking=booking).count(),
+            1,
+            "Exactly one invoice record must exist in DB (no duplicates allowed under concurrency)"
+        )

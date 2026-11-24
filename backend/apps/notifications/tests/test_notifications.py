@@ -73,3 +73,34 @@ class NotificationTestCase(TestCase):
         self.assertIn(log_a.id, log_ids, "Manager A must see Property A logs")
         self.assertNotIn(log_b.id, log_ids, "Manager A must NOT see Property B logs (multi-tenant leak prevented)")
 
+
+    def test_notification_logs_permission_specificity(self):
+        """ISS-09: User with property scope but without can_manage_bookings or can_view_finance must not see logs"""
+        log_a = NotificationLog.objects.create(
+            property=self.prop_a,
+            recipient="+966500000003",
+            channel=NotificationLog.Channel.WHATSAPP,
+            title="Alert A2",
+            body="Booking at Property A"
+        )
+        restricted_manager = User.objects.create_user(
+            email="restricted@hotel.com",
+            password="Password123!",
+            role=User.Role.PROPERTY_MANAGER
+        )
+        # Assigned property scope, but explicitly without booking management or finance view capabilities
+        UserPropertyScope.objects.create(
+            user=restricted_manager,
+            property=self.prop_a,
+            can_manage_bookings=False,
+            can_view_finance=False,
+            can_manage_pricing=True  # only pricing capability
+        )
+
+        from apps.notifications.api import list_notification_logs
+        class DummyRequest:
+            user = restricted_manager
+
+        status, logs = list_notification_logs(DummyRequest())
+        self.assertEqual(status, 200)
+        self.assertEqual(len(logs), 0, "Restricted manager without booking/finance permissions must not see notification logs")

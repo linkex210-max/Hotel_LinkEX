@@ -63,6 +63,9 @@ class Booking(models.Model):
             models.CheckConstraint(check=models.Q(check_in_date__lt=models.F('check_out_date')), name='booking_check_in_lt_check_out'),
             models.CheckConstraint(check=models.Q(total_amount__gte=0), name='booking_total_amount_gte_zero'),
             models.CheckConstraint(check=models.Q(total_nights__gt=0), name='booking_total_nights_gt_zero'),
+            models.CheckConstraint(check=models.Q(subtotal__gte=0), name='booking_subtotal_gte_zero'),
+            models.CheckConstraint(check=models.Q(tax_amount__gte=0), name='booking_tax_amount_gte_zero'),
+            models.CheckConstraint(check=models.Q(discount_amount__gte=0), name='booking_discount_amount_gte_zero'),
         ]
 
     def __str__(self):

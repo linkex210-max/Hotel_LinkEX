@@ -115,3 +115,55 @@ class BookingLifecycleTestCase(TestCase):
         calc = BookingService.calculate_nightly_breakdown(self.room_type, self.check_in, self.check_out)
         self.assertEqual(calc["nights_breakdown"][0]["rate"], 450.00, "Room type specific rule must take precedence")
 
+
+    def test_api_status_transitions_return_refreshed_state(self):
+        """Verify that confirm_booking, mark_no_show, and check_in return fresh database status"""
+        from apps.bookings.api import confirm_booking, check_in, mark_no_show
+        from apps.users.models import User, UserPropertyScope
+
+        manager = User.objects.create_user(email="mgr_fresh@hotel.com", password="Pass123!User")
+        UserPropertyScope.objects.create(
+            user=manager,
+            property=self.property,
+            can_manage_bookings=True
+        )
+
+        class MockRequest:
+            def __init__(self, user):
+                self.user = user
+
+        req = MockRequest(manager)
+
+        booking = BookingService.create_booking_atomic({
+            "room_type_id": self.room_type.id,
+            "unit_id": self.unit1.id,
+            "guest_name": "Fresh Test",
+            "guest_phone": "+966577777777",
+            "check_in_date": self.check_in,
+            "check_out_date": self.check_out,
+        })
+
+        # 1. confirm_booking must return refreshed status
+        status, resp = confirm_booking(req, booking.id)
+        self.assertEqual(status, 200)
+        self.assertEqual(resp["status"], Booking.Status.CONFIRMED)
+
+        # 2. check_in must return refreshed unit status
+        booking.is_paid = True
+        booking.save(update_fields=["is_paid"])
+        status, resp = check_in(req, booking.id)
+        self.assertEqual(status, 200)
+        self.assertEqual(resp["unit_status"], Unit.Status.OCCUPIED)
+
+        # 3. mark_no_show on a pending booking must return refreshed status
+        b2 = BookingService.create_booking_atomic({
+            "room_type_id": self.room_type.id,
+            "unit_id": self.unit2.id,
+            "guest_name": "NoShow Test",
+            "guest_phone": "+966566666666",
+            "check_in_date": self.check_in,
+            "check_out_date": self.check_out,
+        })
+        status, resp = mark_no_show(req, b2.id)
+        self.assertEqual(status, 200)
+        self.assertEqual(resp["status"], Booking.Status.NO_SHOW)

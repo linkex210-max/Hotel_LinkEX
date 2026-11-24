@@ -90,6 +90,7 @@ def confirm_booking(request, booking_id: int):
         BookingService.transition_status(booking, Booking.Status.CONFIRMED, user=request.user, notes="Booking confirmed")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
+    booking.refresh_from_db()  # Reload to get the status written by transition_status
     return 200, {"message": "تم تأكيد الحجز بنجاح", "status": booking.status}
 
 @router.post("/{booking_id}/check-in", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
@@ -109,6 +110,7 @@ def check_in(request, booking_id: int):
         BookingService.transition_status(booking, Booking.Status.CHECKED_IN, user=request.user, notes="Guest checked in")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
+    booking.unit.refresh_from_db()  # Reload unit status written by transition_status
     return 200, {"message": "تم تسجيل الدخول بنجاح", "unit_status": booking.unit.status}
 
 @router.post("/{booking_id}/check-out", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
@@ -151,4 +153,5 @@ def mark_no_show(request, booking_id: int):
         BookingService.transition_status(booking, Booking.Status.NO_SHOW, user=request.user, notes="Guest marked as NO_SHOW")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
+    booking.refresh_from_db()  # Reload to get the status written by transition_status
     return 200, {"message": "تم تسجيل عدم الحضور وتحرير الغرفة والمخزون بنجاح", "status": booking.status}

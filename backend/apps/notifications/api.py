@@ -1,4 +1,5 @@
 from ninja import Router
+from django.db import models
 from typing import List
 from apps.notifications.models import NotificationLog
 from apps.users.permissions import JWTAuth
@@ -16,8 +17,12 @@ def list_notification_logs(request):
         logs = NotificationLog.objects.all()[:50]
     else:
         # تقييد مدير المبنى بنطاق العقارات المخصصة له فقط
-        property_ids = request.user.property_scopes.values_list('property_id', flat=True)
-        logs = NotificationLog.objects.filter(property_id__in=property_ids)[:50]
+        # مع التحقق من صلاحية can_manage_bookings أو can_view_finance
+        # (رؤية الإشعارات مرتبطة بالإشراف الفعلي على العقار)
+        authorized_property_ids = request.user.property_scopes.filter(
+            models.Q(can_manage_bookings=True) | models.Q(can_view_finance=True)
+        ).values_list('property_id', flat=True)
+        logs = NotificationLog.objects.filter(property_id__in=authorized_property_ids)[:50]
 
     return 200, [
         {

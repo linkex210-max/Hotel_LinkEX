@@ -23,8 +23,8 @@ def record_payment(request, data: PaymentIn):
         booking = get_object_or_404(Booking.objects.select_for_update(), id=data.booking_id)
         if booking.guest_id != request.user.id and not has_property_scope(request.user, booking.property_id, 'can_view_finance'):
             return 403, {"error": "Not allowed to pay this booking"}
-        if booking.status in [Booking.Status.CANCELLED, Booking.Status.NO_SHOW]:
-            return 400, {"error": "Payments cannot be recorded for a cancelled or closed booking"}
+        if booking.status in [Booking.Status.CANCELLED, Booking.Status.NO_SHOW, Booking.Status.CHECKED_OUT]:
+            return 400, {"error": "Payments cannot be recorded for a cancelled, no-show, or already checked-out booking"}
         if booking.is_paid:
             return 400, {"error": "Booking is already fully paid"}
         paid = booking.payments.filter(status=Payment.Status.COMPLETED).aggregate(total=Sum("amount"))["total"] or 0

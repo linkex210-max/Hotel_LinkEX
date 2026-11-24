@@ -2,7 +2,7 @@ import base64
 import os
 from datetime import date, datetime
 from decimal import Decimal
-from django.db import transaction, IntegrityError
+from django.db import transaction
 from django.db.models import Sum
 from django.core.exceptions import ValidationError
 from apps.bookings.models import Booking
@@ -73,24 +73,25 @@ class FinanceService:
                 vat_str=str(booking.tax_amount)
             )
 
-            try:
-                invoice = Invoice.objects.create(
-                    booking=booking,
-                    invoice_number=invoice_seq,
-                    invoice_type=invoice_type,
-                    buyer_name=booking.guest_name,
-                    buyer_vat_number=buyer_vat,
-                    subtotal=booking.subtotal,
-                    tax_rate=Decimal("15.00"),
-                    tax_amount=booking.tax_amount,
-                    discount_amount=booking.discount_amount,
-                    total_amount=booking.total_amount,
-                    line_items=line_items,
-                    qr_code_data=qr_code
-                )
-                return invoice
-            except IntegrityError:
-                return Invoice.objects.get(booking_id=booking.id)
+            # Pre-check ensures idempotency inside the select_for_update lock.
+            # We do NOT use try/except IntegrityError here because catching
+            # IntegrityError inside transaction.atomic() marks the savepoint as
+            # broken and any subsequent ORM call raises TransactionManagementError.
+            invoice = Invoice.objects.create(
+                booking=booking,
+                invoice_number=invoice_seq,
+                invoice_type=invoice_type,
+                buyer_name=booking.guest_name,
+                buyer_vat_number=buyer_vat,
+                subtotal=booking.subtotal,
+                tax_rate=Decimal("15.00"),
+                tax_amount=booking.tax_amount,
+                discount_amount=booking.discount_amount,
+                total_amount=booking.total_amount,
+                line_items=line_items,
+                qr_code_data=qr_code
+            )
+            return invoice
 
     @staticmethod
     def calculate_owner_statement(property_id: int, period_start: date, period_end: date) -> OwnerStatement:

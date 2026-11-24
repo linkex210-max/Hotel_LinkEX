@@ -117,6 +117,15 @@ class Unit(models.Model):
         ordering = ['property', 'unit_number']
 
     def clean(self):
+        """
+        التحقق من أن RoomType والوحدة ينتميان للعقار نفسه.
+
+        تحذير: هذا الفحص يعمل فقط عبر instance.save(). مسارات الكتابة التالية
+        تتجاوز clean() وبالتالي لا تخضع لهذا التحقق:
+          - Unit.objects.bulk_create([...])
+          - Unit.objects.filter(...).update(room_type=...)
+        يجب ضمان صحة البيانات في هذه الحالات على مستوى تطبيقي قبل الاستدعاء.
+        """
         super().clean()
         if self.room_type_id and self.property_id:
             if self.room_type.property_id != self.property_id:
