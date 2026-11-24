@@ -1,7 +1,9 @@
 import hashlib
 import uuid
+from decimal import Decimal
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
 class Payment(models.Model):
@@ -31,6 +33,9 @@ class Payment(models.Model):
         verbose_name = _('دفعة مالية')
         verbose_name_plural = _('المدفوعات')
         ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(check=models.Q(amount__gt=0), name='payment_amount_gt_zero'),
+        ]
 
     def __str__(self):
         return f"دفعة #{self.id} - {self.amount} ريال - {self.get_status_display()}"
@@ -75,6 +80,10 @@ class Invoice(models.Model):
         verbose_name = _('فاتورة ضريبية')
         verbose_name_plural = _('الفواتير الضريبية')
         ordering = ['-issue_date']
+        constraints = [
+            models.CheckConstraint(check=models.Q(total_amount__gte=0), name='invoice_total_amount_gte_zero'),
+            models.CheckConstraint(check=models.Q(tax_amount__gte=0), name='invoice_tax_amount_gte_zero'),
+        ]
 
     def __str__(self):
         return f"{self.invoice_number} ({self.total_amount} ريال)"
@@ -84,6 +93,19 @@ class Invoice(models.Model):
         return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
     def save(self, *args, **kwargs):
+        if self.pk:
+            orig = Invoice.objects.filter(pk=self.pk).values(
+                'invoice_number', 'total_amount', 'subtotal', 'tax_amount', 'invoice_hash'
+            ).first()
+            if orig:
+                if (
+                    orig['invoice_number'] != self.invoice_number or
+                    Decimal(str(orig['total_amount'])) != Decimal(str(self.total_amount)) or
+                    Decimal(str(orig['subtotal'])) != Decimal(str(self.subtotal)) or
+                    Decimal(str(orig['tax_amount'])) != Decimal(str(self.tax_amount)) or
+                    (orig['invoice_hash'] and orig['invoice_hash'] != self.invoice_hash)
+                ):
+                    raise ValidationError(_("الفواتير الضريبية المصدرة غير قابلة للتعديل بتاتاً وفقاً لمتطلبات هيئة الزكاة والضريبة والجمارك (ZATCA)"))
         if not self.invoice_hash:
             super().save(*args, **kwargs)
             self.invoice_hash = self.generate_hash()

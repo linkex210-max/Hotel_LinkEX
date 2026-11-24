@@ -59,6 +59,11 @@ class Booking(models.Model):
             models.Index(fields=['unit', 'check_in_date', 'check_out_date']),
             models.Index(fields=['status']),
         ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(check_in_date__lt=models.F('check_out_date')), name='booking_check_in_lt_check_out'),
+            models.CheckConstraint(check=models.Q(total_amount__gte=0), name='booking_total_amount_gte_zero'),
+            models.CheckConstraint(check=models.Q(total_nights__gt=0), name='booking_total_nights_gt_zero'),
+        ]
 
     def __str__(self):
         target = self.unit.unit_number if self.unit else (self.room_type.name if self.room_type else "حجز عام")

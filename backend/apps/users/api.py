@@ -1,4 +1,6 @@
+import jwt
 from ninja import Router
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -6,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from typing import List
 
 from apps.users.models import User, UserPropertyScope, ActivityLog
-from apps.users.schemas import LoginSchema, TokenOutSchema, UserCreateSchema, UserOutSchema, PermissionUpdateSchema
+from apps.users.schemas import LoginSchema, TokenOutSchema, RefreshTokenSchema, UserCreateSchema, UserOutSchema, PermissionUpdateSchema
 from apps.users.permissions import JWTAuth, create_tokens
 
 router = Router()
@@ -36,6 +38,30 @@ def login(request, data: LoginSchema):
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+
+@router.post("/refresh", response={200: TokenOutSchema, 401: dict}, auth=None)
+def refresh_token(request, data: RefreshTokenSchema):
+    """تجديد رمز الدخول access_token باستخدام refresh_token"""
+    try:
+        payload = jwt.decode(
+            data.refresh_token,
+            settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM]
+        )
+        if payload.get("type") != "refresh":
+            return 401, {"message": "رمز التحديث غير صالح"}
+        user_id = payload.get("user_id")
+        user = User.objects.filter(id=user_id, is_active=True).first()
+        if not user:
+            return 401, {"message": "المستخدم غير موجود أو حسابه غير نشط"}
+        access_token, new_refresh = create_tokens(user)
+        return 200, {
+            "access_token": access_token,
+            "refresh_token": new_refresh,
+            "token_type": "bearer"
+        }
+    except (jwt.PyJWTError, Exception):
+        return 401, {"message": "رمز التحديث منتهي الصلاحية أو غير صالح"}
 
 @router.post("/register", response={201: UserOutSchema, 400: dict}, auth=None)
 def register(request, data: UserCreateSchema):
@@ -79,11 +105,11 @@ def list_team_members(request):
         User.Role.ACCOUNTANT
     ]).distinct()
 
-@router.post("/property-scope", auth=auth_security)
+@router.post("/property-scope", response={200: dict, 403: dict}, auth=auth_security)
 def assign_property_scope(request, data: PermissionUpdateSchema):
     """تحديد نطاق وصلاحيات مستخدم على مبنى معين"""
-    if request.user.role != User.Role.SUPER_ADMIN:
-        return {"error": "غير مصرح لك بتعديل النطاقات"}
+    if request.user.role != User.Role.SUPER_ADMIN and not request.user.is_superuser:
+        return 403, {"error": "غير مصرح لك بتعديل النطاقات"}
         
     user = get_object_or_404(User, id=data.user_id)
     scope, created = UserPropertyScope.objects.update_or_create(
@@ -95,4 +121,4 @@ def assign_property_scope(request, data: PermissionUpdateSchema):
             "can_view_finance": data.can_view_finance
         }
     )
-    return {"message": "تم تحديث نطاق الصلاحيات بنجاح", "scope_id": scope.id}
+    return 200, {"message": "تم تحديث نطاق الصلاحيات بنجاح", "scope_id": scope.id}

@@ -2,6 +2,7 @@ import base64
 import os
 from datetime import date, datetime
 from decimal import Decimal
+from django.db import transaction, IntegrityError
 from django.db.models import Sum
 from django.core.exceptions import ValidationError
 from apps.bookings.models import Booking
@@ -32,58 +33,64 @@ class FinanceService:
     @staticmethod
     def generate_invoice_for_booking(booking: Booking, invoice_type: str = Invoice.InvoiceType.SIMPLIFIED, buyer_vat: str = "") -> Invoice:
         """
-        إصدار فاتورة ضريبية رسمية محصنة من التعديل (ZATCA Compliant)
+        إصدار فاتورة ضريبية رسمية محصنة من التعديل (ZATCA Compliant) مع ضمان الذرية Idempotency
         """
-        # التحقق إذا كانت الفاتورة مصدرة مسبقاً
-        if hasattr(booking, 'invoice'):
-            return booking.invoice
-        if not booking.is_paid:
-            raise ValidationError("An invoice can only be issued after the booking is fully paid")
+        with transaction.atomic():
+            booking = Booking.objects.select_for_update().get(pk=booking.pk)
+            existing_invoice = Invoice.objects.filter(booking_id=booking.id).first()
+            if existing_invoice:
+                return existing_invoice
 
-        seller_name = booking.property.name
-        seller_vat = os.getenv("ZATCA_SELLER_VAT_NUMBER", "")
-        if len(seller_vat) != 15 or not seller_vat.isdigit() or seller_vat[0] != "3" or seller_vat[-1] != "3":
-            raise ValidationError("Configure a valid ZATCA_SELLER_VAT_NUMBER before issuing invoices")
-        from django.utils import timezone
-        timestamp_now = timezone.now()
+            if not booking.is_paid:
+                raise ValidationError("An invoice can only be issued after the booking is fully paid")
 
-        # توليد رقم تسلسلي فريد
-        invoice_seq = f"INV-{timestamp_now.year}-{booking.id:06d}"
+            seller_name = booking.property.name
+            seller_vat = os.getenv("ZATCA_SELLER_VAT_NUMBER", "")
+            if len(seller_vat) != 15 or not seller_vat.isdigit() or seller_vat[0] != "3" or seller_vat[-1] != "3":
+                raise ValidationError("Configure a valid ZATCA_SELLER_VAT_NUMBER before issuing invoices")
+            from django.utils import timezone
+            timestamp_now = timezone.now()
 
-        # بنود الفاتورة اليومية
-        line_items = [
-            {
-                "description": f"إقامة في {booking.room_type.name if booking.room_type else 'وحدة سكنية'} - ليلة {night['date']}",
-                "rate": night["rate"],
-                "quantity": 1,
-                "amount": night["rate"]
-            }
-            for night in booking.nights_breakdown
-        ]
+            # توليد رقم تسلسلي فريد
+            invoice_seq = f"INV-{timestamp_now.year}-{booking.id:06d}"
 
-        qr_code = generate_zatca_tlv_qr(
-            seller_name=seller_name,
-            vat_number=seller_vat,
-            timestamp_str=timestamp_now.isoformat(),
-            total_str=str(booking.total_amount),
-            vat_str=str(booking.tax_amount)
-        )
+            # بنود الفاتورة اليومية
+            line_items = [
+                {
+                    "description": f"إقامة في {booking.room_type.name if booking.room_type else 'وحدة سكنية'} - ليلة {night['date']}",
+                    "rate": night["rate"],
+                    "quantity": 1,
+                    "amount": night["rate"]
+                }
+                for night in booking.nights_breakdown
+            ]
 
-        invoice = Invoice.objects.create(
-            booking=booking,
-            invoice_number=invoice_seq,
-            invoice_type=invoice_type,
-            buyer_name=booking.guest_name,
-            buyer_vat_number=buyer_vat,
-            subtotal=booking.subtotal,
-            tax_rate=Decimal("15.00"),
-            tax_amount=booking.tax_amount,
-            discount_amount=booking.discount_amount,
-            total_amount=booking.total_amount,
-            line_items=line_items,
-            qr_code_data=qr_code
-        )
-        return invoice
+            qr_code = generate_zatca_tlv_qr(
+                seller_name=seller_name,
+                vat_number=seller_vat,
+                timestamp_str=timestamp_now.isoformat(),
+                total_str=str(booking.total_amount),
+                vat_str=str(booking.tax_amount)
+            )
+
+            try:
+                invoice = Invoice.objects.create(
+                    booking=booking,
+                    invoice_number=invoice_seq,
+                    invoice_type=invoice_type,
+                    buyer_name=booking.guest_name,
+                    buyer_vat_number=buyer_vat,
+                    subtotal=booking.subtotal,
+                    tax_rate=Decimal("15.00"),
+                    tax_amount=booking.tax_amount,
+                    discount_amount=booking.discount_amount,
+                    total_amount=booking.total_amount,
+                    line_items=line_items,
+                    qr_code_data=qr_code
+                )
+                return invoice
+            except IntegrityError:
+                return Invoice.objects.get(booking_id=booking.id)
 
     @staticmethod
     def calculate_owner_statement(property_id: int, period_start: date, period_end: date) -> OwnerStatement:

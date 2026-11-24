@@ -35,15 +35,18 @@ def send_whatsapp_booking_alert(booking_id: int):
     """إرسال تنبيه واتساب للنزيل بتفاصيل الحجز"""
     try:
         booking = Booking.objects.get(id=booking_id)
+        unit_str = booking.unit.unit_number if booking.unit else (booking.room_type.name if booking.room_type else "لم تعين بعد")
         msg_body = (
             f"مرحباً {booking.guest_name}، تم استلام حجزك في {booking.property.name} بنجاح!\n"
             f"رقم الحجز: #{booking.id}\n"
             f"تاريخ الوصول: {booking.check_in_date}\n"
-            f"الوحدة: {booking.unit.unit_number}\n"
+            f"الوحدة: {unit_str}\n"
             f"الإجمالي: {booking.total_amount} ريال"
         )
 
         NotificationLog.objects.create(
+            property=booking.property,
+            booking=booking,
             recipient=booking.guest_phone,
             channel=NotificationLog.Channel.WHATSAPP,
             title="تأكيد حجز جديد",

@@ -11,7 +11,7 @@ from apps.users.permissions import JWTAuth, has_property_scope
 router = Router()
 auth_security = JWTAuth()
 
-@router.post("/check-availability")
+@router.post("/check-availability", response={200: dict, 400: dict})
 def check_availability(request, data: AvailabilityCheck):
     """
     فحص توفر الغرف اليومي فائق السرعة O(1)
@@ -24,7 +24,7 @@ def check_availability(request, data: AvailabilityCheck):
             check_out=data.check_out_date,
             rooms_count=data.rooms_count
         )
-        return {
+        return 200, {
             "room_type_id": rt.id,
             "room_type_name": rt.name,
             "available": is_avail
@@ -46,9 +46,9 @@ def check_availability(request, data: AvailabilityCheck):
                 "base_price": float(rt.base_price),
                 "available": avail
             })
-        return {"property_id": data.property_id, "results": results}
+        return 200, {"property_id": data.property_id, "results": results}
         
-    return {"error": "يجب تحديد إما room_type_id أو property_id"}
+    return 400, {"error": "يجب تحديد إما room_type_id أو property_id"}
 
 @router.post("/", response={201: BookingOut, 400: dict}, auth=auth_security)
 def create_booking(request, data: BookingIn):
@@ -60,7 +60,7 @@ def create_booking(request, data: BookingIn):
     except (ValueError, ValidationError, RoomType.DoesNotExist, Unit.DoesNotExist) as e:
         return 400, {"error": str(e)}
 
-@router.post("/{booking_id}/assign-room", auth=auth_security)
+@router.post("/{booking_id}/assign-room", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
 def assign_room(request, booking_id: int, data: AssignRoomIn):
     """
     تسكين النزيل وتعيين رقم الغرفة الفعلي (بواسطة موظف الاستقبال)
@@ -74,12 +74,12 @@ def assign_room(request, booking_id: int, data: AssignRoomIn):
         BookingService.assign_room_unit(booking, unit, user=request.user)
     except ValidationError as exc:
         return 400, {"error": str(exc)}
-    return {
+    return 200, {
         "message": f"تم تعيين الغرفة رقم {unit.unit_number} للحجز بنجاح",
         "unit_number": unit.unit_number
     }
 
-@router.post("/{booking_id}/confirm", auth=auth_security)
+@router.post("/{booking_id}/confirm", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
 def confirm_booking(request, booking_id: int):
     """تأكيد الحجز"""
     booking = get_object_or_404(Booking, id=booking_id)
@@ -90,9 +90,9 @@ def confirm_booking(request, booking_id: int):
         BookingService.transition_status(booking, Booking.Status.CONFIRMED, user=request.user, notes="Booking confirmed")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
-    return {"message": "تم تأكيد الحجز بنجاح", "status": booking.status}
+    return 200, {"message": "تم تأكيد الحجز بنجاح", "status": booking.status}
 
-@router.post("/{booking_id}/check-in", auth=auth_security)
+@router.post("/{booking_id}/check-in", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
 def check_in(request, booking_id: int):
     """تسجيل دخول النزيل (Check-in) وتحديث حالة الغرفة لمشغولة"""
     booking = get_object_or_404(Booking, id=booking_id)
@@ -109,9 +109,9 @@ def check_in(request, booking_id: int):
         BookingService.transition_status(booking, Booking.Status.CHECKED_IN, user=request.user, notes="Guest checked in")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
-    return {"message": "تم تسجيل الدخول بنجاح", "unit_status": booking.unit.status}
+    return 200, {"message": "تم تسجيل الدخول بنجاح", "unit_status": booking.unit.status}
 
-@router.post("/{booking_id}/check-out", auth=auth_security)
+@router.post("/{booking_id}/check-out", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
 def check_out(request, booking_id: int):
     """تسجيل خروج النزيل (Check-out) وتحويل الغرفة إلى وضع التنظيف"""
     booking = get_object_or_404(Booking, id=booking_id)
@@ -122,9 +122,9 @@ def check_out(request, booking_id: int):
         BookingService.transition_status(booking, Booking.Status.CHECKED_OUT, user=request.user, notes="Guest checked out")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
-    return {"message": "تم تسجيل الخروج بنجاح وتحويل الوحدة للتنظيف"}
+    return 200, {"message": "تم تسجيل الخروج بنجاح وتحويل الوحدة للتنظيف"}
 
-@router.post("/{booking_id}/cancel", auth=auth_security)
+@router.post("/{booking_id}/cancel", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
 def cancel_booking(request, booking_id: int, reason: Optional[str] = ""):
     """إلغاء الحجز وتحرير المخزون اليومي والغرفة"""
     booking = get_object_or_404(Booking, id=booking_id)
@@ -138,4 +138,17 @@ def cancel_booking(request, booking_id: int, reason: Optional[str] = ""):
         BookingService.transition_status(booking, Booking.Status.CANCELLED, user=request.user, notes="Booking cancelled")
     except ValidationError as exc:
         return 400, {"error": str(exc)}
-    return {"message": "تم إلغاء الحجز وتحرير المخزون بنجاح"}
+    return 200, {"message": "تم إلغاء الحجز وتحرير المخزون بنجاح"}
+
+@router.post("/{booking_id}/no-show", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
+def mark_no_show(request, booking_id: int):
+    """تسجيل عدم حضور النزيل (No Show) وتحرير المخزون والغرفة"""
+    booking = get_object_or_404(Booking, id=booking_id)
+    if not has_property_scope(request.user, booking.property_id, 'can_manage_bookings'):
+        return 403, {"error": "غير مصرح لك بتسجيل عدم الحضور لهذا الحجز"}
+        
+    try:
+        BookingService.transition_status(booking, Booking.Status.NO_SHOW, user=request.user, notes="Guest marked as NO_SHOW")
+    except ValidationError as exc:
+        return 400, {"error": str(exc)}
+    return 200, {"message": "تم تسجيل عدم الحضور وتحرير الغرفة والمخزون بنجاح", "status": booking.status}

@@ -23,6 +23,10 @@ def record_payment(request, data: PaymentIn):
         booking = get_object_or_404(Booking.objects.select_for_update(), id=data.booking_id)
         if booking.guest_id != request.user.id and not has_property_scope(request.user, booking.property_id, 'can_view_finance'):
             return 403, {"error": "Not allowed to pay this booking"}
+        if booking.status in [Booking.Status.CANCELLED, Booking.Status.NO_SHOW]:
+            return 400, {"error": "Payments cannot be recorded for a cancelled or closed booking"}
+        if booking.is_paid:
+            return 400, {"error": "Booking is already fully paid"}
         paid = booking.payments.filter(status=Payment.Status.COMPLETED).aggregate(total=Sum("amount"))["total"] or 0
         pending = booking.payments.filter(status=Payment.Status.PENDING).aggregate(total=Sum("amount"))["total"] or 0
         if data.amount <= 0 or data.amount + paid + pending > booking.total_amount:
@@ -59,7 +63,7 @@ def get_invoice(request, invoice_number: str):
         return 403, {"error": "Not allowed to view this invoice"}
     return 200, invoice
 
-@router.post("/payments/{payment_id}/verify", auth=auth_security)
+@router.post("/payments/{payment_id}/verify", response={200: dict, 400: dict, 403: dict}, auth=auth_security)
 def verify_transfer_receipt(request, payment_id: int):
     """اعتماد سند أو إيصال تحويل بنكي بواسطة المحاسب"""
     payment = get_object_or_404(Payment, id=payment_id)
@@ -87,9 +91,9 @@ def verify_transfer_receipt(request, payment_id: int):
                 lambda: FinanceService.generate_invoice_for_booking(booking),
                 robust=True,
             )
-    return {"message": "تم اعتماد السند المالي بنجاح"}
+    return 200, {"message": "تم اعتماد السند المالي بنجاح"}
 
-@router.post("/expenses", auth=auth_security)
+@router.post("/expenses", response={201: dict, 403: dict}, auth=auth_security)
 def record_expense(request, data: ExpenseIn):
     """تسجيل مصروف تشغيلي على مبنى"""
     if not has_property_scope(request.user, data.property_id, 'can_view_finance'):
@@ -104,13 +108,13 @@ def record_expense(request, data: ExpenseIn):
         notes=data.notes,
         recorded_by=request.user
     )
-    return {"message": "تم تسجيل المصروف بنجاح", "expense_id": expense.id}
+    return 201, {"message": "تم تسجيل المصروف بنجاح", "expense_id": expense.id}
 
-@router.post("/statements/generate", response=StatementOut, auth=auth_security)
+@router.post("/statements/generate", response={200: StatementOut, 403: dict}, auth=auth_security)
 def generate_owner_statement(request, property_id: int, start_date: date, end_date: date):
     """توليد كشف حساب وإيرادات مالك العقار"""
     if not has_property_scope(request.user, property_id, 'can_view_finance'):
         return 403, {"error": "غير مصرح لك باستخراج كشوفات الحساب"}
 
     statement = FinanceService.calculate_owner_statement(property_id, start_date, end_date)
-    return statement
+    return 200, statement

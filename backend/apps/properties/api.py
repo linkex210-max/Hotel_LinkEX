@@ -47,17 +47,17 @@ def create_room_type(request, data: RoomTypeIn):
 
 # --- Units (الغرف الفعلية) ---
 
-@router.get("/{property_id}/units", response=List[UnitOut], auth=auth_security)
+@router.get("/{property_id}/units", response={200: List[UnitOut], 403: dict}, auth=auth_security)
 def list_units(request, property_id: int, room_type_id: Optional[int] = None, status: Optional[str] = None):
     """عرض قائمة الوحدات والغرف الفعلية"""
     if not has_property_scope(request.user, property_id, 'can_manage_bookings'):
-        return []
+        return 403, {"error": "غير مصرح لك باستعراض غرف هذا المبنى"}
     qs = Unit.objects.filter(property_id=property_id, is_active=True)
     if room_type_id:
         qs = qs.filter(room_type_id=room_type_id)
     if status:
         qs = qs.filter(status=status)
-    return qs
+    return 200, list(qs)
 
 @router.post("/units", response={201: UnitOut, 400: dict, 403: dict}, auth=auth_security)
 def create_unit(request, data: UnitIn):
@@ -71,20 +71,20 @@ def create_unit(request, data: UnitIn):
 
 # --- Inventory & Calendar (المخزون والتوفر اليومي O(1)) ---
 
-@router.get("/room-types/{room_type_id}/inventory", response=List[InventoryDayOut], auth=auth_security)
+@router.get("/room-types/{room_type_id}/inventory", response={200: List[InventoryDayOut], 403: dict}, auth=auth_security)
 def get_room_type_inventory(request, room_type_id: int, start_date: date, end_date: date):
     """استعراض توفر وأسعار فئة الغرفة عبر التقويم اليومي السريع"""
     room_type = get_object_or_404(RoomType, id=room_type_id)
     if not has_property_scope(request.user, room_type.property_id, 'can_manage_bookings'):
-        return []
+        return 403, {"error": "غير مصرح لك باستعراض مخزون هذا المبنى"}
     inv = RoomTypeInventory.objects.filter(
         room_type_id=room_type_id,
         date__gte=start_date,
         date__lte=end_date
     ).order_by('date')
-    return inv
+    return 200, list(inv)
 
-@router.post("/pricing-rules", auth=auth_security)
+@router.post("/pricing-rules", response={201: dict, 400: dict, 403: dict}, auth=auth_security)
 def create_pricing_rule(request, data: PricingRuleSchema):
     """إنشاء قاعدة تسعير موسمي ديناميكي"""
     target_property_id = data.property_id
@@ -103,4 +103,4 @@ def create_pricing_rule(request, data: PricingRuleSchema):
         return 403, {"error": "لا تملك صلاحية إدارة الأسعار على هذا المبنى"}
         
     rule = SeasonalPricing.objects.create(**data.model_dump())
-    return {"message": "تم إضافة قاعدة التسعير بنجاح", "rule_id": rule.id}
+    return 201, {"message": "تم إضافة قاعدة التسعير بنجاح", "rule_id": rule.id}
