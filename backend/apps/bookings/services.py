@@ -105,11 +105,13 @@ class BookingService:
             subtotal += night_rate
             breakdown.append({
                 "date": single_date.isoformat(),
-                "rate": float(night_rate)
+                "rate": f"{night_rate.quantize(Decimal('0.01')):.2f}",
             })
 
+        from apps.finance.models import TaxRate
+        tax_rate_pct = TaxRate.get_rate_for_date(check_in)
         avg_base_rate = (subtotal / Decimal(nights)).quantize(Decimal("0.01"))
-        tax_amount = (subtotal * Decimal("0.15")).quantize(Decimal("0.01"))  # 15% ضريبة
+        tax_amount = (subtotal * (tax_rate_pct / Decimal("100.00"))).quantize(Decimal("0.01"))
         total_amount = subtotal + tax_amount
 
         return {
@@ -117,6 +119,7 @@ class BookingService:
             "nights_breakdown": breakdown,
             "avg_base_rate": avg_base_rate,
             "subtotal": subtotal,
+            "tax_rate": tax_rate_pct,
             "tax_amount": tax_amount,
             "discount_amount": Decimal("0.00"),
             "total_amount": total_amount
@@ -173,6 +176,7 @@ class BookingService:
                 nights_breakdown=calc["nights_breakdown"],
                 base_rate=calc["avg_base_rate"],
                 subtotal=calc["subtotal"],
+                tax_rate=calc["tax_rate"],
                 tax_amount=calc["tax_amount"],
                 discount_amount=calc["discount_amount"],
                 total_amount=calc["total_amount"],

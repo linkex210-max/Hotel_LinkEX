@@ -1,7 +1,8 @@
-from ninja import Router
+from ninja import Router, Query
 from typing import List, Optional
 from datetime import date
 from django.shortcuts import get_object_or_404
+from config.rate_limit import is_rate_limited
 from apps.properties.models import Property, RoomType, Unit, RoomTypeInventory, SeasonalPricing
 from apps.properties.schemas import (
     PropertyIn, PropertyOut, RoomTypeIn, RoomTypeOut,
@@ -12,30 +13,49 @@ from apps.users.permissions import JWTAuth, has_property_scope
 router = Router()
 auth_security = JWTAuth()
 
-@router.get("/", response=List[PropertyOut])
-def list_properties(request, city: Optional[str] = None, property_type: Optional[str] = None):
-    """عرض قائمة المباني والفنادق مع إمكانية الفلترة"""
+@router.get("/", response={200: List[PropertyOut], 429: dict})
+def list_properties(
+    request,
+    city: Optional[str] = None,
+    property_type: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """[PUBLIC ENDPOINT] عرض قائمة المباني والفنادق النشطة للنزلاء مع pagination وحماية rate limiting"""
+    if is_rate_limited(request, "public_list_properties", limit=60, window_seconds=60):
+        return 429, {"error": "Too many requests, please try again later"}
     qs = Property.objects.filter(is_active=True)
     if city:
         qs = qs.filter(city__icontains=city)
     if property_type:
         qs = qs.filter(property_type=property_type)
-    return qs
+    return 200, list(qs[offset:offset + limit])
 
 @router.post("/", response={201: PropertyOut, 403: dict}, auth=auth_security)
 def create_property(request, data: PropertyIn):
     """إضافة مبنى أو فندق جديد (للمدراء فقط)"""
     if request.user.role != 'SUPER_ADMIN' and not request.user.is_superuser:
         return 403, {"error": "غير مصرح لك بإضافة مبنى"}
-    prop = Property.objects.create(**data.model_dump())
+    payload = data.model_dump()
+    payload["property_type"] = data.property_type.value
+    payload["ownership_type"] = data.ownership_type.value
+    prop = Property.objects.create(**payload)
     return 201, prop
 
 # --- Room Types (فئات الغرف) ---
 
-@router.get("/{property_id}/room-types", response=List[RoomTypeOut])
-def list_room_types(request, property_id: int):
-    """عرض فئات الغرف المتاحة في مبنى/فندق معين"""
-    return RoomType.objects.filter(property_id=property_id, is_active=True)
+@router.get("/{property_id}/room-types", response={200: List[RoomTypeOut], 429: dict})
+def list_room_types(
+    request,
+    property_id: int,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """[PUBLIC ENDPOINT] عرض فئات الغرف المتاحة في مبنى/فندق معين مع pagination وحماية rate limiting"""
+    if is_rate_limited(request, "public_list_room_types", limit=60, window_seconds=60):
+        return 429, {"error": "Too many requests, please try again later"}
+    qs = RoomType.objects.filter(property_id=property_id, property__is_active=True, is_active=True)
+    return 200, list(qs[offset:offset + limit])
 
 @router.post("/room-types", response={201: RoomTypeOut, 403: dict}, auth=auth_security)
 def create_room_type(request, data: RoomTypeIn):

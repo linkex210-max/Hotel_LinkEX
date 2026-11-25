@@ -5,9 +5,11 @@ services:
     environment:
       POSTGRES_DB: ${DB_NAME:-hotel_db}
       POSTGRES_USER: ${DB_USER:-hotel_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-hotel_pass123}
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set}
+    # Keep PostgreSQL internal to Docker network.
+    # For local host debugging only, bind strictly to localhost:
+    # ports:
+    #   - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,8 +21,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: hotel_linkex_redis
-    ports:
-      - "6379:6379"
+    # Keep Redis internal to Docker network.
+    # For local host debugging only, bind strictly to localhost:
+    # ports:
+    #   - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,7 +42,7 @@ services:
     volumes:
       - ./backend:/app
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - ./backend/.env
     depends_on:

@@ -1,12 +1,27 @@
+from enum import Enum
 from pydantic import BaseModel
 from typing import Optional, List
 from decimal import Decimal
 from datetime import date, datetime
+from apps.properties.models import Property
+
+
+class PropertyTypeEnum(str, Enum):
+    HOTEL = Property.PropertyType.HOTEL.value
+    APARTMENT_BUILDING = Property.PropertyType.APARTMENT_BUILDING.value
+    CHALET = Property.PropertyType.CHALET.value
+    VILLA = Property.PropertyType.VILLA.value
+
+
+class OwnershipTypeEnum(str, Enum):
+    OWNED = Property.OwnershipType.OWNED.value
+    MANAGED = Property.OwnershipType.MANAGED.value
+
 
 class PropertyIn(BaseModel):
     name: str
-    property_type: str = "HOTEL"
-    ownership_type: str = "OWNED"
+    property_type: PropertyTypeEnum = PropertyTypeEnum.HOTEL
+    ownership_type: OwnershipTypeEnum = OwnershipTypeEnum.OWNED
     city: str
     address: str
     description: Optional[str] = ""

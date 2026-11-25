@@ -113,7 +113,7 @@ class BookingLifecycleTestCase(TestCase):
             is_active=True
         )
         calc = BookingService.calculate_nightly_breakdown(self.room_type, self.check_in, self.check_out)
-        self.assertEqual(calc["nights_breakdown"][0]["rate"], 450.00, "Room type specific rule must take precedence")
+        self.assertEqual(calc["nights_breakdown"][0]["rate"], "450.00", "Room type specific rule must take precedence")
 
 
     def test_api_status_transitions_return_refreshed_state(self):

@@ -9,7 +9,7 @@ from typing import List
 
 from apps.users.models import User, UserPropertyScope, ActivityLog
 from apps.users.schemas import LoginSchema, TokenOutSchema, RefreshTokenSchema, UserCreateSchema, UserOutSchema, PermissionUpdateSchema
-from apps.users.permissions import JWTAuth, create_tokens
+from apps.users.permissions import JWTAuth, create_tokens, rotate_refresh_token, revoke_refresh_token
 
 router = Router()
 auth_security = JWTAuth()
@@ -41,27 +41,22 @@ def login(request, data: LoginSchema):
 
 @router.post("/refresh", response={200: TokenOutSchema, 401: dict}, auth=None)
 def refresh_token(request, data: RefreshTokenSchema):
-    """تجديد رمز الدخول access_token باستخدام refresh_token"""
+    """تجديد رمز الدخول access_token وتدوير refresh_token بأمان"""
     try:
-        payload = jwt.decode(
-            data.refresh_token,
-            settings.JWT_SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM]
-        )
-        if payload.get("type") != "refresh":
-            return 401, {"message": "رمز التحديث غير صالح"}
-        user_id = payload.get("user_id")
-        user = User.objects.filter(id=user_id, is_active=True).first()
-        if not user:
-            return 401, {"message": "المستخدم غير موجود أو حسابه غير نشط"}
-        access_token, new_refresh = create_tokens(user)
+        access_token, new_refresh = rotate_refresh_token(data.refresh_token)
         return 200, {
             "access_token": access_token,
             "refresh_token": new_refresh,
             "token_type": "bearer"
         }
-    except (jwt.PyJWTError, Exception):
+    except (jwt.PyJWTError, ValueError, TypeError):
         return 401, {"message": "رمز التحديث منتهي الصلاحية أو غير صالح"}
+
+@router.post("/logout", response={200: dict}, auth=None)
+def logout(request, data: RefreshTokenSchema):
+    """إبطال رمز التحديث عند تسجيل الخروج"""
+    revoke_refresh_token(data.refresh_token)
+    return 200, {"message": "تم تسجيل الخروج وإبطال رمز التحديث بنجاح"}
 
 @router.post("/register", response={201: UserOutSchema, 400: dict}, auth=None)
 def register(request, data: UserCreateSchema):
@@ -118,7 +113,13 @@ def assign_property_scope(request, data: PermissionUpdateSchema):
         defaults={
             "can_manage_bookings": data.can_manage_bookings,
             "can_manage_pricing": data.can_manage_pricing,
-            "can_view_finance": data.can_view_finance
+            "can_view_finance": data.can_view_finance,
+            "can_record_payments": data.can_record_payments,
+            "can_verify_payments": data.can_verify_payments,
+            "can_record_expenses": data.can_record_expenses,
+            "can_generate_statements": data.can_generate_statements,
+            "can_settle_statements": data.can_settle_statements,
+            "can_issue_invoices": data.can_issue_invoices,
         }
     )
     return 200, {"message": "تم تحديث نطاق الصلاحيات بنجاح", "scope_id": scope.id}

@@ -41,6 +41,7 @@ class Booking(models.Model):
 
     base_rate = models.DecimalField(_('متوسط سعر الليلة'), max_digits=10, decimal_places=2)
     subtotal = models.DecimalField(_('المجموع قبل الضريبة'), max_digits=10, decimal_places=2)
+    tax_rate = models.DecimalField(_('نسبة الضريبة %'), max_digits=5, decimal_places=2, default=15.00)
     tax_amount = models.DecimalField(_('مبلغ الضريبة'), max_digits=10, decimal_places=2, default=0.00)
     discount_amount = models.DecimalField(_('مبلغ الخصم'), max_digits=10, decimal_places=2, default=0.00)
     total_amount = models.DecimalField(_('الإجمالي النهائي'), max_digits=10, decimal_places=2)

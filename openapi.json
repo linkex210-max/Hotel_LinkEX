@@ -80,7 +80,42 @@
             }
           }
         },
-        "description": "تجديد رمز الدخول access_token باستخدام refresh_token",
+        "description": "تجديد رمز الدخول access_token وتدوير refresh_token بأمان",
+        "tags": [
+          "Users & Auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenSchema"
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/users/logout": {
+      "post": {
+        "operationId": "apps_users_api_logout",
+        "summary": "Logout",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "description": "إبطال رمز التحديث عند تسجيل الخروج",
         "tags": [
           "Users & Auth"
         ],
@@ -289,6 +324,29 @@
               "title": "Property Type"
             },
             "required": false
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            },
+            "required": false
           }
         ],
         "responses": {
@@ -305,9 +363,21 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
           }
         },
-        "description": "عرض قائمة المباني والفنادق مع إمكانية الفلترة",
+        "description": "[PUBLIC ENDPOINT] عرض قائمة المباني والفنادق النشطة للنزلاء مع pagination وحماية rate limiting",
         "tags": [
           "Properties & Units"
         ]
@@ -374,6 +444,29 @@
               "type": "integer"
             },
             "required": true
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            },
+            "required": false
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            },
+            "required": false
           }
         ],
         "responses": {
@@ -390,9 +483,21 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
           }
         },
-        "description": "عرض فئات الغرف المتاحة في مبنى/فندق معين",
+        "description": "[PUBLIC ENDPOINT] عرض فئات الغرف المتاحة في مبنى/فندق معين مع pagination وحماية rate limiting",
         "tags": [
           "Properties & Units"
         ]
@@ -763,9 +868,21 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
           }
         },
-        "description": "فحص توفر الغرف اليومي فائق السرعة O(1)",
+        "description": "[PUBLIC ENDPOINT] فحص توفر الغرف اليومي فائق السرعة O(1) مع حماية rate limiting",
         "tags": [
           "Bookings & Engine"
         ],
@@ -1589,6 +1706,18 @@
               }
             }
           },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
+          },
           "403": {
             "description": "Forbidden",
             "content": {
@@ -1603,6 +1732,68 @@
           }
         },
         "description": "توليد كشف حساب وإيرادات مالك العقار",
+        "tags": [
+          "Finance & Settlements"
+        ],
+        "security": [
+          {
+            "JWTAuth": []
+          }
+        ]
+      }
+    },
+    "/api/finance/statements/{statement_id}/settle": {
+      "post": {
+        "operationId": "apps_finance_api_settle_owner_statement",
+        "summary": "Settle Owner Statement",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "statement_id",
+            "schema": {
+              "title": "Statement Id",
+              "type": "integer"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatementOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "description": "تسوية واعتماد كشف حساب مالك العقار",
         "tags": [
           "Finance & Settlements"
         ],
@@ -1850,6 +2041,36 @@
             "default": false,
             "title": "Can View Finance",
             "type": "boolean"
+          },
+          "can_record_payments": {
+            "default": false,
+            "title": "Can Record Payments",
+            "type": "boolean"
+          },
+          "can_verify_payments": {
+            "default": false,
+            "title": "Can Verify Payments",
+            "type": "boolean"
+          },
+          "can_record_expenses": {
+            "default": false,
+            "title": "Can Record Expenses",
+            "type": "boolean"
+          },
+          "can_generate_statements": {
+            "default": false,
+            "title": "Can Generate Statements",
+            "type": "boolean"
+          },
+          "can_settle_statements": {
+            "default": false,
+            "title": "Can Settle Statements",
+            "type": "boolean"
+          },
+          "can_issue_invoices": {
+            "default": false,
+            "title": "Can Issue Invoices",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1920,6 +2141,14 @@
         "title": "PropertyOut",
         "type": "object"
       },
+      "OwnershipTypeEnum": {
+        "enum": [
+          "OWNED",
+          "MANAGED"
+        ],
+        "title": "OwnershipTypeEnum",
+        "type": "string"
+      },
       "PropertyIn": {
         "properties": {
           "name": {
@@ -1927,14 +2156,20 @@
             "type": "string"
           },
           "property_type": {
-            "default": "HOTEL",
-            "title": "Property Type",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PropertyTypeEnum"
+              }
+            ],
+            "default": "HOTEL"
           },
           "ownership_type": {
-            "default": "OWNED",
-            "title": "Ownership Type",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OwnershipTypeEnum"
+              }
+            ],
+            "default": "OWNED"
           },
           "city": {
             "title": "City",
@@ -1964,6 +2199,16 @@
         ],
         "title": "PropertyIn",
         "type": "object"
+      },
+      "PropertyTypeEnum": {
+        "enum": [
+          "HOTEL",
+          "APARTMENT_BUILDING",
+          "CHALET",
+          "VILLA"
+        ],
+        "title": "PropertyTypeEnum",
+        "type": "string"
       },
       "RoomTypeOut": {
         "properties": {
@@ -2558,16 +2803,12 @@
             "type": "string"
           },
           "source": {
-            "anyOf": [
+            "allOf": [
               {
-                "type": "string"
-              },
-              {
-                "type": "null"
+                "$ref": "#/components/schemas/BookingSourceEnum"
               }
             ],
-            "default": "ONLINE",
-            "title": "Source"
+            "default": "ONLINE"
           },
           "special_requests": {
             "anyOf": [
@@ -2591,6 +2832,15 @@
         ],
         "title": "BookingIn",
         "type": "object"
+      },
+      "BookingSourceEnum": {
+        "enum": [
+          "ONLINE",
+          "MANUAL",
+          "OTA"
+        ],
+        "title": "BookingSourceEnum",
+        "type": "string"
       },
       "AssignRoomIn": {
         "properties": {
@@ -2687,39 +2937,22 @@
             "title": "Amount"
           },
           "method": {
-            "default": "CARD",
-            "enum": [
-              "CARD",
-              "TRANSFER",
-              "CASH",
-              "APPLE_PAY"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaymentMethodEnum"
+              }
             ],
-            "title": "Method",
-            "type": "string"
+            "default": "CARD"
           },
           "transaction_reference": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
             "default": "",
-            "title": "Transaction Reference"
+            "title": "Transaction Reference",
+            "type": "string"
           },
           "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
             "default": "",
-            "title": "Notes"
+            "title": "Notes",
+            "type": "string"
           }
         },
         "required": [
@@ -2728,6 +2961,16 @@
         ],
         "title": "PaymentIn",
         "type": "object"
+      },
+      "PaymentMethodEnum": {
+        "enum": [
+          "CARD",
+          "TRANSFER",
+          "CASH",
+          "APPLE_PAY"
+        ],
+        "title": "PaymentMethodEnum",
+        "type": "string"
       },
       "InvoiceOut": {
         "properties": {
@@ -2827,28 +3070,17 @@
             "type": "integer"
           },
           "invoice_type": {
-            "anyOf": [
+            "allOf": [
               {
-                "type": "string"
-              },
-              {
-                "type": "null"
+                "$ref": "#/components/schemas/InvoiceTypeEnum"
               }
             ],
-            "default": "SIMPLIFIED",
-            "title": "Invoice Type"
+            "default": "SIMPLIFIED"
           },
           "buyer_vat_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
             "default": "",
-            "title": "Buyer Vat Number"
+            "title": "Buyer Vat Number",
+            "type": "string"
           }
         },
         "required": [
@@ -2856,6 +3088,26 @@
         ],
         "title": "InvoiceGenerateIn",
         "type": "object"
+      },
+      "InvoiceTypeEnum": {
+        "enum": [
+          "SIMPLIFIED",
+          "STANDARD"
+        ],
+        "title": "InvoiceTypeEnum",
+        "type": "string"
+      },
+      "ExpenseCategoryEnum": {
+        "enum": [
+          "UTILITIES",
+          "MAINTENANCE",
+          "CLEANING",
+          "COMMISSION",
+          "STAFF",
+          "OTHER"
+        ],
+        "title": "ExpenseCategoryEnum",
+        "type": "string"
       },
       "ExpenseIn": {
         "properties": {
@@ -2868,9 +3120,12 @@
             "type": "string"
           },
           "category": {
-            "default": "MAINTENANCE",
-            "title": "Category",
-            "type": "string"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExpenseCategoryEnum"
+              }
+            ],
+            "default": "MAINTENANCE"
           },
           "amount": {
             "anyOf": [
@@ -2890,16 +3145,9 @@
             "type": "string"
           },
           "notes": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
             "default": "",
-            "title": "Notes"
+            "title": "Notes",
+            "type": "string"
           }
         },
         "required": [

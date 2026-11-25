@@ -1,10 +1,51 @@
 import hashlib
+import json
+import os
 import uuid
+from datetime import date
 from decimal import Decimal
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+
+
+class TaxRate(models.Model):
+    """جدول نسب الضريبة المحددة بزمن (Versioned Tax Configuration)."""
+    name = models.CharField(_('اسم الضريبة'), max_length=100, default='VAT')
+    rate_percentage = models.DecimalField(_('نسبة الضريبة %'), max_digits=5, decimal_places=2)
+    effective_from = models.DateField(_('تاريخ البداية'))
+    effective_to = models.DateField(_('تاريخ النهاية'), null=True, blank=True)
+    is_active = models.BooleanField(_('نشط'), default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('نسبة ضريبة')
+        verbose_name_plural = _('نسب الضرائب')
+        ordering = ['-effective_from', '-id']
+        constraints = [
+            models.CheckConstraint(check=models.Q(rate_percentage__gte=0), name='tax_rate_percentage_gte_zero'),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.rate_percentage}%)"
+
+    @classmethod
+    def get_rate_for_date(cls, target_date: date | None = None) -> Decimal:
+        target = target_date or timezone.localdate()
+        rate_obj = (
+            cls.objects.filter(
+                is_active=True,
+                effective_from__lte=target,
+            )
+            .filter(models.Q(effective_to__isnull=True) | models.Q(effective_to__gte=target))
+            .order_by('-effective_from', '-id')
+            .first()
+        )
+        if rate_obj:
+            return rate_obj.rate_percentage
+        return Decimal(os.getenv('DEFAULT_VAT_RATE', '15.00')).quantize(Decimal('0.01'))
 
 class Payment(models.Model):
     class PaymentMethod(models.TextChoices):
@@ -27,6 +68,7 @@ class Payment(models.Model):
     transfer_receipt = models.ImageField(_('إيصال التحويل'), upload_to='receipts/', blank=True, null=True)
     verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     notes = models.TextField(_('ملاحظات المحاسب'), blank=True)
+    completed_at = models.DateTimeField(_('تاريخ الاعتماد الفعلي'), null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -37,8 +79,38 @@ class Payment(models.Model):
             models.CheckConstraint(check=models.Q(amount__gt=0), name='payment_amount_gt_zero'),
         ]
 
+    def save(self, *args, **kwargs):
+        if self.status == self.Status.COMPLETED and not self.completed_at:
+            self.completed_at = timezone.now()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"دفعة #{self.id} - {self.amount} ريال - {self.get_status_display()}"
+
+
+class InvoiceQuerySet(models.QuerySet):
+    """
+    QuerySet مخصص للفواتير يمنع التعديل الجماعي عبر QuerySet.update() أو bulk_update()
+    على مستوى طبقة التطبيق (Application Layer).
+
+    ملاحظة أمنية معمارية:
+    هذا المنع يحمي مسارات Django ORM فقط؛ لا يغني عن صلاحيات قاعدة البيانات
+    (مثل REVOKE UPDATE, DELETE ON finance_invoice) لمنع التعديل عبر SQL المباشر.
+    """
+    def update(self, **kwargs):
+        raise ValidationError(_(
+            "يُمنع استخدام QuerySet.update() على الفواتير الضريبية. استخدم InvoiceService فقط."
+        ))
+
+
+class InvoiceManager(models.Manager):
+    def get_queryset(self):
+        return InvoiceQuerySet(self.model, using=self._db)
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        raise ValidationError(_(
+            "يُمنع استخدام bulk_update() على الفواتير الضريبية. استخدم InvoiceService فقط."
+        ))
 
 
 class Invoice(models.Model):
@@ -50,16 +122,25 @@ class Invoice(models.Model):
         SIMPLIFIED = 'SIMPLIFIED', _('فاتورة ضريبية مبسطة (أفراد / B2C)')
         STANDARD = 'STANDARD', _('فاتورة ضريبية قياسية (شركات / B2B)')
 
+    class Status(models.TextChoices):
+        DRAFT = 'DRAFT', _('مسودة')
+        ISSUED = 'ISSUED', _('مصدرة')
+        VOIDED = 'VOIDED', _('ملغاة / مبطلة')
+
     booking = models.OneToOneField('bookings.Booking', on_delete=models.PROTECT, related_name='invoice')
     invoice_number = models.CharField(_('رقم الفاتورة المتسلسل'), max_length=50, unique=True)
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     invoice_type = models.CharField(_('نوع الفاتورة'), max_length=20, choices=InvoiceType.choices, default=InvoiceType.SIMPLIFIED)
+    status = models.CharField(_('حالة الفاتورة'), max_length=20, choices=Status.choices, default=Status.ISSUED)
     
     # تفاصيل العميل والضريبة
     buyer_name = models.CharField(_('اسم العميل / الشركة'), max_length=150)
     buyer_vat_number = models.CharField(_('الرقم الضريبي للمشتري'), max_length=50, blank=True)
     
     issue_date = models.DateTimeField(_('تاريخ ووقت الإصدار'), auto_now_add=True)
+    issued_at = models.DateTimeField(_('وقت الاعتماد والإصدار'), null=True, blank=True)
+    voided_at = models.DateTimeField(_('وقت الإبطال'), null=True, blank=True)
+    void_reason = models.TextField(_('سبب الإبطال'), blank=True)
     
     # المبالغ المالية
     subtotal = models.DecimalField(_('المبلغ الخاضع للضريبة'), max_digits=12, decimal_places=2)
@@ -75,6 +156,8 @@ class Invoice(models.Model):
     qr_code_data = models.TextField(_('بيانات الـ QR Code (بصيغة TLV Base64)'), blank=True)
     invoice_hash = models.CharField(_('البصمة الرقمية للفاتورة (SHA256 Hash)'), max_length=64, blank=True)
     is_reported = models.BooleanField(_('تم التبليغ للهيئة الضريبية'), default=False)
+
+    objects = InvoiceManager()
 
     class Meta:
         verbose_name = _('فاتورة ضريبية')
@@ -92,49 +175,54 @@ class Invoice(models.Model):
 
     def generate_hash(self):
         """
-        توليد البصمة الرقمية SHA-256 لجميع حقول الفاتورة المالية والهوية.
-        يجب أن تُدرج جميع الحقول الجوهرية بترتيب ثابت حتى يكون الـ Hash قابلاً للتحقق.
-
-        تحذير أمني: QuerySet.update() يتجاوز Invoice.save() تماماً.
-        يجب دائماً تعديل الفواتير عبر instance.save() فقط، وليس Invoice.objects.update().
-        أي update() مباشر على جدول الفواتير يُعدّ انتهاكاً لمتطلبات ZATCA.
+        توليد البصمة الرقمية SHA-256 بصيغة JSON Canonical حتمية تشمل جميع حقول الفاتورة الجوهرية.
         """
-        payload = (
-            f"{self.invoice_number}"
-            f"|{self.issue_date}"
-            f"|{self.invoice_type}"
-            f"|{self.buyer_name}"
-            f"|{self.buyer_vat_number or ''}"
-            f"|{self.subtotal}"
-            f"|{self.tax_rate}"
-            f"|{self.tax_amount}"
-            f"|{self.discount_amount}"
-            f"|{self.total_amount}"
-        )
-        return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+        payload = {
+            "invoice_number": self.invoice_number,
+            "uuid": str(self.uuid),
+            "booking_id": self.booking_id,
+            "invoice_type": self.invoice_type,
+            "buyer_name": self.buyer_name,
+            "buyer_vat_number": self.buyer_vat_number or "",
+            "issue_date": self.issue_date.isoformat() if self.issue_date else "",
+            "subtotal": f"{Decimal(str(self.subtotal)):.2f}",
+            "tax_rate": f"{Decimal(str(self.tax_rate)):.2f}",
+            "tax_amount": f"{Decimal(str(self.tax_amount)):.2f}",
+            "discount_amount": f"{Decimal(str(self.discount_amount)):.2f}",
+            "total_amount": f"{Decimal(str(self.total_amount)):.2f}",
+            "line_items": self.line_items,
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
 
     def save(self, *args, **kwargs):
         """
-        حماية الفاتورة الضريبية من أي تعديل بعد الإصدار (ZATCA Compliance).
+        حماية الفاتورة الضريبية من أي تعديل بعد الإصدار أو الإبطال (ZATCA Compliance).
 
-        الحقول المحمية: invoice_number, invoice_type, buyer_name, buyer_vat_number,
-        subtotal, tax_rate, tax_amount, discount_amount, total_amount,
-        invoice_hash, qr_code_data, line_items.
-
-        تحذير: QuerySet.update() يتجاوز هذه الحماية. راجع generate_hash() docstring.
+        الحقول المحمية بالكامل: invoice_number, uuid, booking, invoice_type, buyer_name,
+        buyer_vat_number, issue_date, subtotal, tax_rate, tax_amount, discount_amount,
+        total_amount, line_items, qr_code_data, invoice_hash, is_reported, status.
         """
+        allow_void = getattr(self, '_allow_void_transition', False)
+        allow_report = getattr(self, '_allow_report_transition', False)
+
         if self.pk:
             orig = Invoice.objects.filter(pk=self.pk).values(
-                'invoice_number', 'invoice_type', 'buyer_name', 'buyer_vat_number',
+                'invoice_number', 'uuid', 'booking_id', 'invoice_type', 'status',
+                'buyer_name', 'buyer_vat_number', 'issue_date',
                 'total_amount', 'subtotal', 'tax_rate', 'tax_amount',
                 'discount_amount', 'invoice_hash', 'qr_code_data', 'line_items',
+                'is_reported',
             ).first()
-            if orig:
+            if orig and orig['status'] in (Invoice.Status.ISSUED, Invoice.Status.VOIDED):
                 tampered = (
                     orig['invoice_number'] != self.invoice_number
+                    or str(orig['uuid']) != str(self.uuid)
+                    or orig['booking_id'] != self.booking_id
                     or orig['invoice_type'] != self.invoice_type
                     or orig['buyer_name'] != self.buyer_name
                     or (orig['buyer_vat_number'] or '') != (self.buyer_vat_number or '')
+                    or orig['issue_date'] != self.issue_date
                     or Decimal(str(orig['total_amount'])) != Decimal(str(self.total_amount))
                     or Decimal(str(orig['subtotal'])) != Decimal(str(self.subtotal))
                     or Decimal(str(orig['tax_rate'])) != Decimal(str(self.tax_rate))
@@ -143,18 +231,50 @@ class Invoice(models.Model):
                     or (orig['invoice_hash'] and orig['invoice_hash'] != self.invoice_hash)
                     or (orig['qr_code_data'] and orig['qr_code_data'] != (self.qr_code_data or ''))
                     or orig['line_items'] != self.line_items
+                    or (orig['is_reported'] != self.is_reported and not allow_report)
+                    or (orig['status'] != self.status and not allow_void)
                 )
                 if tampered:
                     raise ValidationError(_(
                         "الفواتير الضريبية المصدرة غير قابلة للتعديل بتاتاً "
                         "وفقاً لمتطلبات هيئة الزكاة والضريبة والجمارك (ZATCA)"
                     ))
+        if not self.issued_at and self.status == Invoice.Status.ISSUED:
+            self.issued_at = timezone.now()
         if not self.invoice_hash:
             super().save(*args, **kwargs)
             self.invoice_hash = self.generate_hash()
             super().save(update_fields=["invoice_hash"])
             return
         super().save(*args, **kwargs)
+
+
+class InvoiceIssuanceAttempt(models.Model):
+    """سجل تتبع محاولات إصدار الفواتير الضريبية بعد اعتماد الدفع (Reliability & Retry Audit)."""
+    class Status(models.TextChoices):
+        PENDING = 'PENDING', _('بانتظار الإصدار')
+        RETRYING = 'RETRYING', _('إعادة محاولة')
+        SUCCEEDED = 'SUCCEEDED', _('تم الإصدار بنجاح')
+        FAILED = 'FAILED', _('فشل الإصدار')
+
+    booking = models.OneToOneField(
+        'bookings.Booking',
+        on_delete=models.CASCADE,
+        related_name='invoice_issuance_attempt',
+    )
+    status = models.CharField(_('حالة المحاولة'), max_length=20, choices=Status.choices, default=Status.PENDING)
+    attempts = models.PositiveIntegerField(_('عدد المحاولات'), default=0)
+    last_error = models.TextField(_('آخر خطأ'), blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('محاولة إصدار فاتورة')
+        verbose_name_plural = _('محاولات إصدار الفواتير')
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"محاولة إصدار فاتورة للحجز #{self.booking_id} ({self.status})"
 
 
 class Expense(models.Model):
@@ -204,6 +324,10 @@ class OwnerStatement(models.Model):
         verbose_name_plural = _('كشوفات حسابات الملاك')
         ordering = ['-period_end']
         constraints = [
+            models.UniqueConstraint(
+                fields=['property', 'period_start', 'period_end'],
+                name='unique_owner_statement_per_period',
+            ),
             models.CheckConstraint(
                 check=models.Q(period_start__lte=models.F('period_end')),
                 name='owner_statement_period_start_lte_end'

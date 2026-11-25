@@ -1,5 +1,7 @@
+import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 class UserManager(BaseUserManager):
@@ -47,6 +49,19 @@ class User(AbstractUser):
         verbose_name_plural = _('المستخدمون')
         ordering = ['-created_at']
 
+    def save(self, *args, **kwargs):
+        should_revoke_tokens = False
+        if self.pk:
+            orig = User.objects.filter(pk=self.pk).values('is_active', 'password').first()
+            if orig:
+                if (orig['is_active'] and not self.is_active) or orig['password'] != self.password:
+                    should_revoke_tokens = True
+        super().save(*args, **kwargs)
+        if should_revoke_tokens:
+            RefreshToken.objects.filter(user=self, revoked_at__isnull=True).update(
+                revoked_at=timezone.now()
+            )
+
     def __str__(self):
         return f"{self.email} ({self.get_role_display()})"
 
@@ -72,6 +87,12 @@ class UserPropertyScope(models.Model):
     can_manage_bookings = models.BooleanField(_('إدارة الحجوزات'), default=True)
     can_manage_pricing = models.BooleanField(_('إدارة الأسعار'), default=False)
     can_view_finance = models.BooleanField(_('الاطلاع على المالية'), default=False)
+    can_record_payments = models.BooleanField(_('تسجيل الدفعات'), default=False)
+    can_verify_payments = models.BooleanField(_('اعتماد الدفعات'), default=False)
+    can_record_expenses = models.BooleanField(_('تسجيل المصروفات'), default=False)
+    can_generate_statements = models.BooleanField(_('توليد كشوفات الملاك'), default=False)
+    can_settle_statements = models.BooleanField(_('تسوية كشوفات الملاك'), default=False)
+    can_issue_invoices = models.BooleanField(_('إصدار الفواتير الضريبية'), default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -81,6 +102,25 @@ class UserPropertyScope(models.Model):
 
     def __str__(self):
         return f"{self.user.email} -> {self.property.name}"
+
+
+class RefreshToken(models.Model):
+    """تخزين بصمة Refresh Tokens على الخادم لدعم Rotation و Revocation."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='refresh_tokens')
+    jti = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
+    token_hash = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    replaced_by_jti = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('رمز تحديث JWT')
+        verbose_name_plural = _('رموز التحديث JWT')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"RefreshToken {self.jti} for {self.user.email}"
 
 
 class ActivityLog(models.Model):

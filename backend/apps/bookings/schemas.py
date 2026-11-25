@@ -1,7 +1,16 @@
+from enum import Enum
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 from datetime import date, datetime
+from apps.bookings.models import Booking
+
+
+class BookingSourceEnum(str, Enum):
+    ONLINE = Booking.BookingSource.ONLINE.value
+    MANUAL = Booking.BookingSource.MANUAL.value
+    OTA = Booking.BookingSource.OTA.value
+
 
 class AvailabilityCheck(BaseModel):
     property_id: Optional[int] = None
@@ -18,12 +27,12 @@ class BookingIn(BaseModel):
     guest_national_id: Optional[str] = ""
     check_in_date: date
     check_out_date: date
-    source: Optional[str] = "ONLINE"
+    source: BookingSourceEnum = BookingSourceEnum.ONLINE
     special_requests: Optional[str] = ""
 
 class NightRateItem(BaseModel):
     date: str
-    rate: float
+    rate: Decimal
 
 class BookingOut(BaseModel):
     id: int

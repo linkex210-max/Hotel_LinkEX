@@ -2,6 +2,7 @@ from ninja import Router
 from typing import List, Optional
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
+from config.rate_limit import is_rate_limited
 from apps.bookings.models import Booking
 from apps.bookings.schemas import BookingIn, BookingOut, AvailabilityCheck, AssignRoomIn
 from apps.bookings.services import BookingService
@@ -11,11 +12,13 @@ from apps.users.permissions import JWTAuth, has_property_scope
 router = Router()
 auth_security = JWTAuth()
 
-@router.post("/check-availability", response={200: dict, 400: dict})
+@router.post("/check-availability", response={200: dict, 400: dict, 429: dict})
 def check_availability(request, data: AvailabilityCheck):
     """
-    فحص توفر الغرف اليومي فائق السرعة O(1)
+    [PUBLIC ENDPOINT] فحص توفر الغرف اليومي فائق السرعة O(1) مع حماية rate limiting
     """
+    if is_rate_limited(request, "public_check_availability", limit=60, window_seconds=60):
+        return 429, {"error": "Too many requests, please try again later"}
     if data.room_type_id:
         rt = get_object_or_404(RoomType, id=data.room_type_id)
         is_avail = BookingService.is_room_type_available(
@@ -43,7 +46,7 @@ def check_availability(request, data: AvailabilityCheck):
             results.append({
                 "room_type_id": rt.id,
                 "room_type_name": rt.name,
-                "base_price": float(rt.base_price),
+                "base_price": f"{rt.base_price:.2f}",
                 "available": avail
             })
         return 200, {"property_id": data.property_id, "results": results}
