@@ -14,12 +14,32 @@ sys.path.insert(0, str(BASE_DIR / 'apps'))
 
 # Quick-start development settings - unsuitable for production
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 't')
+
+INSECURE_SECRET_KEYS = {
+    'django-insecure-local-development-only-key',
+    'django-insecure-hotel-linkex-dev-secret-key-change-in-production-2026',
+    'hotel-linkex-jwt-secret-key-2026',
+    'changeme',
+    'secret',
+}
+
+def _validate_production_secret(value: str | None, name: str) -> str:
+    if not value:
+        raise RuntimeError(f'{name} must be configured when DEBUG is disabled')
+    if value.startswith('django-insecure-') or value in INSECURE_SECRET_KEYS or len(value) < 32:
+        raise RuntimeError(f'{name} is insecure or too short for production (minimum 32 chars, no default/insecure prefix)')
+    return value
+
 SECRET_KEY = os.getenv('SECRET_KEY')
-if not SECRET_KEY:
-    if not DEBUG:
-        raise RuntimeError('SECRET_KEY must be configured when DEBUG is disabled')
+if not DEBUG:
+    SECRET_KEY = _validate_production_secret(SECRET_KEY, 'SECRET_KEY')
+elif not SECRET_KEY:
     SECRET_KEY = 'django-insecure-local-development-only-key'
+
 ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if host.strip()]
+if not DEBUG:
+    if not ALLOWED_HOSTS or '*' in ALLOWED_HOSTS:
+        raise RuntimeError('ALLOWED_HOSTS must not be empty or contain wildcard "*" when DEBUG is disabled')
 
 # Application definition
 DJANGO_APPS = [
@@ -84,15 +104,21 @@ if USE_SQLITE:
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
             'NAME': BASE_DIR / 'db.sqlite3',
+            'OPTIONS': {
+                'timeout': 20,
+            },
         }
     }
 else:
+    DB_PASSWORD = os.getenv('DB_PASSWORD')
+    if not DEBUG and (not DB_PASSWORD or DB_PASSWORD == 'hotel_pass123'):
+        raise RuntimeError('DB_PASSWORD must be configured with a strong non-default password when DEBUG is disabled')
     DATABASES = {
         'default': {
             'ENGINE': os.getenv('DB_ENGINE', 'django.db.backends.postgresql'),
             'NAME': os.getenv('DB_NAME', 'hotel_db'),
             'USER': os.getenv('DB_USER', 'hotel_user'),
-            'PASSWORD': os.getenv('DB_PASSWORD', 'hotel_pass123'),
+            'PASSWORD': DB_PASSWORD or 'hotel_pass123',
             'HOST': os.getenv('DB_HOST', '127.0.0.1'),
             'PORT': os.getenv('DB_PORT', '5432'),
         }
@@ -126,11 +152,29 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# CORS Settings
+# CORS & Security Settings
 CORS_ALLOW_ALL_ORIGINS = DEBUG
+CORS_ALLOWED_ORIGINS = [
+    origin.strip() for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',') if origin.strip()
+]
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()
+]
+
 SECURE_SSL_REDIRECT = not DEBUG and os.getenv('SECURE_SSL_REDIRECT', 'True').lower() in ('true', '1', 't')
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    USE_X_FORWARDED_HOST = os.getenv('USE_X_FORWARDED_HOST', 'True').lower() in ('true', '1', 't')
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', 31536000))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
 SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = 'Lax'
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_REFERRER_POLICY = 'same-origin'
@@ -150,7 +194,11 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', SECRET_KEY)
+JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY')
+if not DEBUG:
+    JWT_SECRET_KEY = _validate_production_secret(JWT_SECRET_KEY, 'JWT_SECRET_KEY')
+elif not JWT_SECRET_KEY:
+    JWT_SECRET_KEY = SECRET_KEY
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
 JWT_ACCESS_TOKEN_LIFETIME_MINUTES = int(os.getenv('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', 60))
 JWT_REFRESH_TOKEN_LIFETIME_DAYS = int(os.getenv('JWT_REFRESH_TOKEN_LIFETIME_DAYS', 7))

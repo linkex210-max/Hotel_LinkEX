@@ -1,5 +1,6 @@
 import builtins
 from django.db import models
+from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
 class Property(models.Model):
@@ -47,6 +48,9 @@ class OwnerContract(models.Model):
     class Meta:
         verbose_name = _('عقد المالك')
         verbose_name_plural = _('عقود الملاك')
+        constraints = [
+            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='contract_start_lte_end'),
+        ]
 
     def __str__(self):
         return f"عقد {self.owner_name} - {self.property.name}"
@@ -73,6 +77,9 @@ class RoomType(models.Model):
         verbose_name = _('فئة الغرفة')
         verbose_name_plural = _('فئات الغرف')
         unique_together = ('property', 'name')
+        constraints = [
+            models.CheckConstraint(check=models.Q(base_price__gte=0), name='room_type_base_price_gte_zero'),
+        ]
 
     def __str__(self):
         return f"{self.property.name} - {self.name}"
@@ -109,6 +116,25 @@ class Unit(models.Model):
         unique_together = ('property', 'unit_number')
         ordering = ['property', 'unit_number']
 
+    def clean(self):
+        """
+        التحقق من أن RoomType والوحدة ينتميان للعقار نفسه.
+
+        تحذير: هذا الفحص يعمل فقط عبر instance.save(). مسارات الكتابة التالية
+        تتجاوز clean() وبالتالي لا تخضع لهذا التحقق:
+          - Unit.objects.bulk_create([...])
+          - Unit.objects.filter(...).update(room_type=...)
+        يجب ضمان صحة البيانات في هذه الحالات على مستوى تطبيقي قبل الاستدعاء.
+        """
+        super().clean()
+        if self.room_type_id and self.property_id:
+            if self.room_type.property_id != self.property_id:
+                raise ValidationError(_("فئة الغرفة المحددة لا تنتمي لنفس العقار / المبنى"))
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         type_str = f" ({self.room_type.name})" if self.room_type else ""
         return f"{self.property.name} - {self.unit_number}{type_str}"
@@ -142,6 +168,10 @@ class RoomTypeInventory(models.Model):
         indexes = [
             models.Index(fields=['room_type', 'date']),
         ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(booked_rooms__lte=models.F('total_rooms')), name='inventory_booked_lte_total'),
+            models.CheckConstraint(check=models.Q(price__gte=0), name='inventory_price_gte_zero'),
+        ]
 
     def __str__(self):
         return f"{self.room_type.name} [{self.date}]: {self.available_rooms}/{self.total_rooms}"
@@ -167,6 +197,10 @@ class SeasonalPricing(models.Model):
     class Meta:
         verbose_name = _('تسعير موسمي')
         verbose_name_plural = _('الأسعار الموسمية')
+        constraints = [
+            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='seasonal_start_lte_end'),
+            models.CheckConstraint(check=models.Q(price_multiplier__gt=0), name='seasonal_multiplier_gt_zero'),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.start_date} -> {self.end_date})"

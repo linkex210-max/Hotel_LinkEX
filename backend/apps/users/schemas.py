@@ -11,6 +11,9 @@ class TokenOutSchema(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
 
+class RefreshTokenSchema(BaseModel):
+    refresh_token: str
+
 class UserCreateSchema(BaseModel):
     email: EmailStr
     password: str
@@ -37,3 +40,9 @@ class PermissionUpdateSchema(BaseModel):
     can_manage_bookings: bool = True
     can_manage_pricing: bool = False
     can_view_finance: bool = False
+    can_record_payments: bool = False
+    can_verify_payments: bool = False
+    can_record_expenses: bool = False
+    can_generate_statements: bool = False
+    can_settle_statements: bool = False
+    can_issue_invoices: bool = False

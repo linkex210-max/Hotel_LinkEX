@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 from decimal import Decimal
-from django.db import transaction
+from django.db import models, transaction
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import Q, F
 from apps.bookings.models import Booking, BookingStatusHistory
 from apps.properties.models import Property, RoomType, Unit, RoomTypeInventory, SeasonalPricing
 
@@ -63,21 +63,22 @@ class BookingService:
         احتساب تفصيل أسعار كل ليلة بدقة (Audit Trail & Dynamic Pricing)
         لضمان العدالة في استرجاع الأموال واحتساب الضرائب
         """
+        if check_in >= check_out:
+            raise ValidationError("تاريخ المغادرة يجب أن يكون بعد تاريخ الوصول")
+
         dates = list(cls.get_date_range(check_in, check_out))
         nights = len(dates)
-        if nights == 0:
-            nights = 1
 
         breakdown = []
         subtotal = Decimal("0.00")
 
-        # جلب الأسعار الموسمية المحتملة
+        # جلب الأسعار الموسمية مع تقديم القواعد المحددة لنوع الغرفة على القواعد العامة للعقار
         seasonal_rules = list(SeasonalPricing.objects.filter(
             Q(room_type=room_type) | Q(property=room_type.property, room_type__isnull=True),
             is_active=True,
             start_date__lte=check_out,
             end_date__gte=check_in
-        ))
+        ).order_by(models.F('room_type_id').desc(nulls_last=True), '-id'))
 
         # جلب أسعار المخزون المخصصة
         daily_prices = {
@@ -104,11 +105,13 @@ class BookingService:
             subtotal += night_rate
             breakdown.append({
                 "date": single_date.isoformat(),
-                "rate": float(night_rate)
+                "rate": f"{night_rate.quantize(Decimal('0.01')):.2f}",
             })
 
+        from apps.finance.models import TaxRate
+        tax_rate_pct = TaxRate.get_rate_for_date(check_in)
         avg_base_rate = (subtotal / Decimal(nights)).quantize(Decimal("0.01"))
-        tax_amount = (subtotal * Decimal("0.15")).quantize(Decimal("0.01"))  # 15% ضريبة
+        tax_amount = (subtotal * (tax_rate_pct / Decimal("100.00"))).quantize(Decimal("0.01"))
         total_amount = subtotal + tax_amount
 
         return {
@@ -116,6 +119,7 @@ class BookingService:
             "nights_breakdown": breakdown,
             "avg_base_rate": avg_base_rate,
             "subtotal": subtotal,
+            "tax_rate": tax_rate_pct,
             "tax_amount": tax_amount,
             "discount_amount": Decimal("0.00"),
             "total_amount": total_amount
@@ -172,6 +176,7 @@ class BookingService:
                 nights_breakdown=calc["nights_breakdown"],
                 base_rate=calc["avg_base_rate"],
                 subtotal=calc["subtotal"],
+                tax_rate=calc["tax_rate"],
                 tax_amount=calc["tax_amount"],
                 discount_amount=calc["discount_amount"],
                 total_amount=calc["total_amount"],
@@ -205,14 +210,22 @@ class BookingService:
 
     @staticmethod
     def assign_room_unit(booking: Booking, unit: Unit, user=None):
-        """تسكين النزيل وتعيين رقم الغرفة الفعلي عند الدخول"""
-        if unit.property_id != booking.property_id or unit.room_type_id != booking.room_type_id:
-            raise ValidationError("الغرفة لا تنتمي لنفس الفندق")
-        if unit.status != Unit.Status.AVAILABLE:
-            raise ValidationError(f"الغرفة رقم {unit.unit_number} غير متاحة حالياً ({unit.get_status_display()})")
-
+        """تسكين النزيل وتعيين رقم الغرفة الفعلي عند الدخول مع ضمان Lock Ordering ومنع Race Conditions"""
         with transaction.atomic():
+            # 1. القفل المتسق أولاً للحجز لمنع الـ Deadlock مع transition_status
+            booking = Booking.objects.select_for_update().get(pk=booking.pk)
+            if booking.status not in [Booking.Status.PENDING, Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN]:
+                raise ValidationError("لا يمكن تعيين غرفة لحجز ملغي أو منتهي")
+
+            # 2. قفل الوحدة الفعلية بعد الحجز
             unit = Unit.objects.select_for_update().get(pk=unit.pk)
+
+            # 3. التحقق الدقيق بعد الحصول على الأقفال
+            if unit.property_id != booking.property_id or unit.room_type_id != booking.room_type_id:
+                raise ValidationError("الغرفة لا تنتمي لنفس الفندق أو فئة الغرفة")
+            if unit.status != Unit.Status.AVAILABLE and booking.unit_id != unit.id:
+                raise ValidationError(f"الغرفة رقم {unit.unit_number} غير متاحة حالياً ({unit.get_status_display()})")
+
             overlaps = Booking.objects.filter(
                 unit=unit,
                 status__in=[Booking.Status.PENDING, Booking.Status.CONFIRMED, Booking.Status.CHECKED_IN],
@@ -221,6 +234,7 @@ class BookingService:
             ).exclude(pk=booking.pk).exists()
             if overlaps:
                 raise ValidationError("Unit is already assigned to an overlapping booking")
+
             booking.unit = unit
             booking.save(update_fields=["unit", "updated_at"])
 
@@ -239,7 +253,7 @@ class BookingService:
             booking.status = new_status
             booking.save(update_fields=["status", "updated_at"])
 
-            if new_status == Booking.Status.CANCELLED:
+            if new_status in (Booking.Status.CANCELLED, Booking.Status.NO_SHOW):
                 for night in booking.nights_breakdown:
                     day = date.fromisoformat(night["date"])
                     inventory = RoomTypeInventory.objects.select_for_update().filter(
@@ -257,7 +271,7 @@ class BookingService:
                 elif new_status == Booking.Status.CHECKED_OUT:
                     unit.status = Unit.Status.CLEANING
                     unit.save(update_fields=["status"])
-                elif new_status == Booking.Status.CANCELLED:
+                elif new_status in (Booking.Status.CANCELLED, Booking.Status.NO_SHOW):
                     unit.status = Unit.Status.AVAILABLE
                     unit.save(update_fields=["status"])
 

@@ -15,6 +15,8 @@ class NotificationLog(models.Model):
         PENDING = 'PENDING', _('قيد المعالجة')
 
     recipient = models.CharField(_('المستلم (رقم/إيميل)'), max_length=150)
+    property = models.ForeignKey('properties.Property', on_delete=models.CASCADE, null=True, blank=True, related_name='notification_logs')
+    booking = models.ForeignKey('bookings.Booking', on_delete=models.SET_NULL, null=True, blank=True, related_name='notification_logs')
     channel = models.CharField(_('القناة'), max_length=20, choices=Channel.choices, default=Channel.WHATSAPP)
     title = models.CharField(_('عنوان الإشعار'), max_length=200)
     body = models.TextField(_('نص الرسالة'))

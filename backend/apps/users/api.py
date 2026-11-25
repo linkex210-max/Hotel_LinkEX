@@ -1,4 +1,6 @@
+import jwt
 from ninja import Router
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
@@ -6,8 +8,8 @@ from django.shortcuts import get_object_or_404
 from typing import List
 
 from apps.users.models import User, UserPropertyScope, ActivityLog
-from apps.users.schemas import LoginSchema, TokenOutSchema, UserCreateSchema, UserOutSchema, PermissionUpdateSchema
-from apps.users.permissions import JWTAuth, create_tokens
+from apps.users.schemas import LoginSchema, TokenOutSchema, RefreshTokenSchema, UserCreateSchema, UserOutSchema, PermissionUpdateSchema
+from apps.users.permissions import JWTAuth, create_tokens, rotate_refresh_token, revoke_refresh_token
 
 router = Router()
 auth_security = JWTAuth()
@@ -36,6 +38,25 @@ def login(request, data: LoginSchema):
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+
+@router.post("/refresh", response={200: TokenOutSchema, 401: dict}, auth=None)
+def refresh_token(request, data: RefreshTokenSchema):
+    """تجديد رمز الدخول access_token وتدوير refresh_token بأمان"""
+    try:
+        access_token, new_refresh = rotate_refresh_token(data.refresh_token)
+        return 200, {
+            "access_token": access_token,
+            "refresh_token": new_refresh,
+            "token_type": "bearer"
+        }
+    except (jwt.PyJWTError, ValueError, TypeError):
+        return 401, {"message": "رمز التحديث منتهي الصلاحية أو غير صالح"}
+
+@router.post("/logout", response={200: dict}, auth=None)
+def logout(request, data: RefreshTokenSchema):
+    """إبطال رمز التحديث عند تسجيل الخروج"""
+    revoke_refresh_token(data.refresh_token)
+    return 200, {"message": "تم تسجيل الخروج وإبطال رمز التحديث بنجاح"}
 
 @router.post("/register", response={201: UserOutSchema, 400: dict}, auth=None)
 def register(request, data: UserCreateSchema):
@@ -79,11 +100,11 @@ def list_team_members(request):
         User.Role.ACCOUNTANT
     ]).distinct()
 
-@router.post("/property-scope", auth=auth_security)
+@router.post("/property-scope", response={200: dict, 403: dict}, auth=auth_security)
 def assign_property_scope(request, data: PermissionUpdateSchema):
     """تحديد نطاق وصلاحيات مستخدم على مبنى معين"""
-    if request.user.role != User.Role.SUPER_ADMIN:
-        return {"error": "غير مصرح لك بتعديل النطاقات"}
+    if request.user.role != User.Role.SUPER_ADMIN and not request.user.is_superuser:
+        return 403, {"error": "غير مصرح لك بتعديل النطاقات"}
         
     user = get_object_or_404(User, id=data.user_id)
     scope, created = UserPropertyScope.objects.update_or_create(
@@ -92,7 +113,13 @@ def assign_property_scope(request, data: PermissionUpdateSchema):
         defaults={
             "can_manage_bookings": data.can_manage_bookings,
             "can_manage_pricing": data.can_manage_pricing,
-            "can_view_finance": data.can_view_finance
+            "can_view_finance": data.can_view_finance,
+            "can_record_payments": data.can_record_payments,
+            "can_verify_payments": data.can_verify_payments,
+            "can_record_expenses": data.can_record_expenses,
+            "can_generate_statements": data.can_generate_statements,
+            "can_settle_statements": data.can_settle_statements,
+            "can_issue_invoices": data.can_issue_invoices,
         }
     )
-    return {"message": "تم تحديث نطاق الصلاحيات بنجاح", "scope_id": scope.id}
+    return 200, {"message": "تم تحديث نطاق الصلاحيات بنجاح", "scope_id": scope.id}
