@@ -508,3 +508,61 @@ class FinanceTestCase(TestCase):
         self.assertTrue(self.booking.is_paid)
         self.assertEqual(self.booking.status, Booking.Status.CONFIRMED)
         self.assertTrue(InvoiceIssuanceAttempt.objects.filter(booking=self.booking).exists())
+
+    def test_upload_validation_blocks_spoofed_oversized_and_unsafe_files(self):
+        """Security Audit #10: Upload fields must validate extension, size, and actual file content."""
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        # 1. Disallowed extension (.html / .svg)
+        bad_ext = SimpleUploadedFile("payload.html", b"<script>alert(1)</script>", content_type="text/html")
+        exp_bad_ext = Expense(
+            property=self.property, title="Test", amount=Decimal("10.00"),
+            date_incurred=date.today(), invoice_file=bad_ext,
+        )
+        with self.assertRaises(ValidationError):
+            exp_bad_ext.full_clean()
+
+        # 2. Spoofed PDF extension (HTML disguised as .pdf)
+        spoofed_pdf = SimpleUploadedFile("fake.pdf", b"<html>not a pdf</html>", content_type="application/pdf")
+        exp_spoofed = Expense(
+            property=self.property, title="Test", amount=Decimal("10.00"),
+            date_incurred=date.today(), invoice_file=spoofed_pdf,
+        )
+        with self.assertRaises(ValidationError):
+            exp_spoofed.full_clean()
+
+        # 3. Spoofed image extension (non-image bytes disguised as .png)
+        spoofed_img = SimpleUploadedFile("fake.png", b"not-an-image", content_type="image/png")
+        pay_spoofed = Payment(
+            booking=self.booking, amount=Decimal("50.00"), transfer_receipt=spoofed_img,
+        )
+        with self.assertRaises(ValidationError):
+            pay_spoofed.full_clean()
+
+        # 4. Oversized file (> 5MB)
+        oversized = SimpleUploadedFile("big.pdf", b"%PDF-" + (b"0" * (5 * 1024 * 1024 + 10)), content_type="application/pdf")
+        exp_big = Expense(
+            property=self.property, title="Test", amount=Decimal("10.00"),
+            date_incurred=date.today(), invoice_file=oversized,
+        )
+        with self.assertRaises(ValidationError):
+            exp_big.full_clean()
+
+        # 5. Valid PDF passes
+        valid_pdf = SimpleUploadedFile("invoice.pdf", b"%PDF-1.4 valid content", content_type="application/pdf")
+        exp_valid = Expense(
+            property=self.property, title="Valid PDF", amount=Decimal("10.00"),
+            date_incurred=date.today(), invoice_file=valid_pdf,
+        )
+        exp_valid.full_clean()
+
+        # 6. Valid PNG image passes
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), color="red").save(buf, format="PNG")
+        valid_png = SimpleUploadedFile("receipt.png", buf.getvalue(), content_type="image/png")
+        pay_valid = Payment(
+            booking=self.booking, amount=Decimal("50.00"), transfer_receipt=valid_png,
+        )
+        pay_valid.full_clean()

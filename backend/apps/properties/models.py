@@ -2,6 +2,7 @@ import builtins
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
+from config.validators import validate_image_upload
 
 class Property(models.Model):
     class PropertyType(models.TextChoices):
@@ -210,7 +211,7 @@ class UnitImage(models.Model):
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='images', null=True, blank=True)
     room_type = models.ForeignKey(RoomType, on_delete=models.CASCADE, related_name='images', null=True, blank=True)
     unit = models.ForeignKey(Unit, on_delete=models.CASCADE, related_name='images', null=True, blank=True)
-    image = models.ImageField(_('الصورة'), upload_to='properties/')
+    image = models.ImageField(_('الصورة'), upload_to='properties/', validators=[validate_image_upload])
     caption = models.CharField(_('وصف الصورة'), max_length=150, blank=True)
     is_primary = models.BooleanField(_('الصورة الرئيسية'), default=False)
     created_at = models.DateTimeField(auto_now_add=True)

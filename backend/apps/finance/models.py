@@ -9,6 +9,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from config.validators import validate_image_upload, validate_document_or_image_upload
 
 
 class TaxRate(models.Model):
@@ -65,7 +66,13 @@ class Payment(models.Model):
     method = models.CharField(_('طريقة الدفع'), max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.CREDIT_CARD)
     status = models.CharField(_('حالة الدفعة'), max_length=20, choices=Status.choices, default=Status.PENDING)
     transaction_reference = models.CharField(_('الرقم المرجعي / كود العملية'), max_length=100, blank=True)
-    transfer_receipt = models.ImageField(_('إيصال التحويل'), upload_to='receipts/', blank=True, null=True)
+    transfer_receipt = models.ImageField(
+        _('إيصال التحويل'),
+        upload_to='receipts/',
+        blank=True,
+        null=True,
+        validators=[validate_image_upload],
+    )
     verified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     notes = models.TextField(_('ملاحظات المحاسب'), blank=True)
     completed_at = models.DateTimeField(_('تاريخ الاعتماد الفعلي'), null=True, blank=True)
@@ -291,7 +298,13 @@ class Expense(models.Model):
     category = models.CharField(_('تصنيف المصروف'), max_length=30, choices=Category.choices, default=Category.MAINTENANCE)
     amount = models.DecimalField(_('المبلغ'), max_digits=10, decimal_places=2)
     date_incurred = models.DateField(_('تاريخ الصرف'))
-    invoice_file = models.FileField(_('ملف الفاتورة / السند'), upload_to='expenses/', blank=True, null=True)
+    invoice_file = models.FileField(
+        _('ملف الفاتورة / السند'),
+        upload_to='expenses/',
+        blank=True,
+        null=True,
+        validators=[validate_document_or_image_upload],
+    )
     recorded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     notes = models.TextField(_('ملاحظات'), blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
