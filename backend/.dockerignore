@@ -1,0 +1,27 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Local SQLite database
+db.sqlite3
+db.sqlite3-journal
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Logs, media & static artifacts
+*.log
+media/
+staticfiles/
+
+# Git & IDE
+.git/
+.gitignore
+.vscode/
+.idea/

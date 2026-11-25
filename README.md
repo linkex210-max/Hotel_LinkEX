@@ -1,10 +1,10 @@
-#  Hotel LinkEX — Backend API Engine
+# Hotel LinkEX — Backend API Engine
 
 نظام إدارة وحجوزات الفنادق والوحدات السكنية والشاليهات المبني بأحدث معايير هندسة البرمجيات الخلفية (Modular Monolith) باستخدام **Django 5.1** و **Django Ninja**.
 
 ---
 
-## 🚀 المميزات المعمارية الرئيسية (Key Features)
+## المميزات المعمارية الرئيسية (Key Features)
 
 1. **فصل فئات الغرف عن الوحدات الفعلية (Room Types vs Units):**
    - دعم حجز فئة الغرفة في الفنادق مع التسكين التلقائي أو اليدوي برقم الغرفة عند الدخول (Check-in).
@@ -24,7 +24,7 @@
 
 ---
 
-## 🛠 التقنيات المستخدمة (Tech Stack)
+## التقنيات المستخدمة (Tech Stack)
 
 - **Framework:** Django 5.1
 - **API Engine:** Django Ninja (Pydantic V2 + OpenAPI 3.1)
@@ -36,7 +36,7 @@
 
 ---
 
-## 📁 هيكلية المشروع (Project Architecture)
+## هيكلية المشروع (Project Architecture)
 
 ```
 Hotel_LinkEX/
@@ -55,14 +55,16 @@ Hotel_LinkEX/
 │   ├── requirements.txt
 │   └── manage.py
 ├── docker-compose.yml       # تشغيل المنظومة بالكامل (Web + DB + Redis + Celery)
-├── run.bat                 # تشغيل محلي سريع بنقرة واحدة (Windows)
-├── .env.example            # نموذج متغيرات البيئة
+├── scripts/
+│   ├── run.bat             # تشغيل محلي سريع بنقرة واحدة (Windows)
+│   └── run.ps1
+├── docs/                   # التوثيق والتقارير ومخطط OpenAPI
 └── README.md
 ```
 
 ---
 
-## ⚡ البدء السريع (Quick Start)
+## البدء السريع (Quick Start)
 
 ### الخيار 1: التشغيل المحلي السريع (Local Development)
 
@@ -108,7 +110,7 @@ docker compose up --build
 
 ---
 
-## 📖 توثيق الـ API التفاعلي (Swagger / OpenAPI)
+## توثيق الـ API التفاعلي (Swagger / OpenAPI)
 
 بمجرد تشغيل السيرفر، يمكنك استعراض واختبار جميع مسارات الـ API (27 عملية) مباشرة عبر المتصفح:
 - **Swagger UI:** `http://127.0.0.1:8000/api/docs`
@@ -116,7 +118,7 @@ docker compose up --build
 
 ---
 
-## 🔒 معايير الأمان (Security & Hardening)
+## معايير الأمان (Security & Hardening)
 
 - **IDOR Protection:** حماية كاملة لكافة بيانات الحجوزات والمدفوعات والفواتير بناءً على هوية المستخدم ونطاق صلاحيات المبنى (`Property Scope`).
 - **Data Integrity:** قفل السجلات الحساسة باستخدام `select_for_update()` لمنع التعارض الزمني.
