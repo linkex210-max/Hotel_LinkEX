@@ -1,4 +1,4 @@
-# 🏨 Hotel LinkEX — Backend API Engine
+#  Hotel LinkEX — Backend API Engine
 
 نظام إدارة وحجوزات الفنادق والوحدات السكنية والشاليهات المبني بأحدث معايير هندسة البرمجيات الخلفية (Modular Monolith) باستخدام **Django 5.1** و **Django Ninja**.
 
